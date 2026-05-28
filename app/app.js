@@ -146,7 +146,7 @@ function renderShell() {
     ? `GitHub: ${health.publishRepo}`
     : health.githubConfigured
       ? "GitHub 已配置，未设发布仓库"
-      : "GitHub 未配置";
+      : "GitHub App 未配置，公开 repo 可导入";
   githubStatus.classList.toggle("online", Boolean(health.githubSyncConfigured));
   githubStatus.classList.toggle("offline", !health.githubSyncConfigured);
   document.querySelectorAll('input[name="ownerTeam"]').forEach((input) => {

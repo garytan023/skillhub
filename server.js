@@ -861,22 +861,27 @@ async function githubInstallationToken() {
 }
 
 async function githubRequest(route, options = {}) {
-  const token = await githubInstallationToken();
+  const { auth = "auto", ...fetchOptions } = options;
+  const token = auth === "app" || (auth === "auto" && isGithubAppConfigured())
+    ? await githubInstallationToken()
+    : "";
   const response = await fetch(`https://api.github.com${route}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
-      authorization: `Bearer ${token}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       accept: "application/vnd.github+json",
       "content-type": "application/json",
       "user-agent": "skillhub",
       "x-github-api-version": "2022-11-28",
-      ...(options.headers || {}),
+      ...(fetchOptions.headers || {}),
     },
   });
   const text = await response.text();
   const payload = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    throw new AppError("github_api_error", payload.message || `GitHub API failed with ${response.status}`, response.status === 404 ? 404 : 502);
+    const notFoundMessage = "GitHub repo/path not found or private. Public repo can import directly; private repo requires GitHub App config.";
+    const message = response.status === 404 && !token ? notFoundMessage : payload.message || `GitHub API failed with ${response.status}`;
+    throw new AppError("github_api_error", message, response.status === 404 ? 404 : 502);
   }
   return payload;
 }
@@ -954,11 +959,17 @@ async function importGithubPackage(payload) {
   }
   const commit = await githubRequest(`/repos/${owner}/${name}/commits/${encodeURIComponent(sourceRef)}`);
   const tree = await githubRequest(`/repos/${owner}/${name}/git/trees/${commit.sha}?recursive=1`);
-  const prefix = sourcePath === "." ? "" : `${sourcePath}/`;
-  const files = tree.tree
-    .filter((item) => item.type === "blob" && (item.path === sourcePath || item.path.startsWith(prefix)))
-    .filter((item) => item.path === `${sourcePath}/SKILL.md` || item.path.startsWith(prefix));
-  if (!files.some((file) => file.path === `${sourcePath}/SKILL.md` || file.path === "SKILL.md")) {
+  let skillRoot = sourcePath;
+  if (sourcePath === ".") {
+    const matches = tree.tree.filter((item) => item.type === "blob" && (item.path === "SKILL.md" || item.path.endsWith("/SKILL.md")));
+    if (matches.length > 1) {
+      throw new AppError("multiple_github_skills", "Repo contains multiple SKILL.md files. Paste a tree/blob link for one skill folder.", 422);
+    }
+    skillRoot = matches[0] ? path.posix.dirname(matches[0].path) : ".";
+  }
+  const prefix = skillRoot === "." ? "" : `${skillRoot}/`;
+  const files = tree.tree.filter((item) => item.type === "blob" && item.path.startsWith(prefix));
+  if (!files.some((file) => file.path === `${prefix}SKILL.md` || file.path === "SKILL.md")) {
     throw new AppError("skill_not_found", "GitHub path must contain SKILL.md", 404);
   }
   if (files.length > MAX_FILE_COUNT) throw new AppError("too_many_files", `GitHub skill exceeds ${MAX_FILE_COUNT} files`, 422);
@@ -975,7 +986,7 @@ async function importGithubPackage(payload) {
   return parseSkillPackage(entries, {
     sourceType: "github",
     sourceRepo: repo,
-    sourcePath,
+    sourcePath: skillRoot,
     sourceRef,
     sourceCommitSha: commit.sha,
     version: payload.version || sourceRef,
@@ -999,6 +1010,7 @@ async function githubSyncVersion(version, actorId) {
   if (!PUBLISH_REPO) throw new AppError("github_not_configured", "PUBLISH_REPO is not configured", 400);
   validateRepo(PUBLISH_REPO);
   const [owner, repo] = PUBLISH_REPO.split("/");
+  const syncRequest = (route, options = {}) => githubRequest(route, { ...options, auth: "app" });
   const releaseZipPath = await packageSkillVersion(version, actorId);
   const entries = [];
   async function walk(directory, prefix = "") {
@@ -1014,12 +1026,12 @@ async function githubSyncVersion(version, actorId) {
     }
   }
   await walk(version.snapshot_dir);
-  const branch = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(PUBLISH_BRANCH)}`);
+  const branch = await syncRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(PUBLISH_BRANCH)}`);
   const baseCommitSha = branch.object.sha;
-  const baseCommit = await githubRequest(`/repos/${owner}/${repo}/git/commits/${baseCommitSha}`);
+  const baseCommit = await syncRequest(`/repos/${owner}/${repo}/git/commits/${baseCommitSha}`);
   const tree = [];
   for (const entry of entries) {
-    const blob = await githubRequest(`/repos/${owner}/${repo}/git/blobs`, {
+    const blob = await syncRequest(`/repos/${owner}/${repo}/git/blobs`, {
       method: "POST",
       body: JSON.stringify({
         content: entry.content.toString("base64"),
@@ -1033,11 +1045,11 @@ async function githubSyncVersion(version, actorId) {
       sha: blob.sha,
     });
   }
-  const newTree = await githubRequest(`/repos/${owner}/${repo}/git/trees`, {
+  const newTree = await syncRequest(`/repos/${owner}/${repo}/git/trees`, {
     method: "POST",
     body: JSON.stringify({ base_tree: baseCommit.tree.sha, tree }),
   });
-  const newCommit = await githubRequest(`/repos/${owner}/${repo}/git/commits`, {
+  const newCommit = await syncRequest(`/repos/${owner}/${repo}/git/commits`, {
     method: "POST",
     body: JSON.stringify({
       message: `publish: ${version.slug}@${version.version}`,
@@ -1045,7 +1057,7 @@ async function githubSyncVersion(version, actorId) {
       parents: [baseCommitSha],
     }),
   });
-  await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(PUBLISH_BRANCH)}`, {
+  await syncRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(PUBLISH_BRANCH)}`, {
     method: "PATCH",
     body: JSON.stringify({ sha: newCommit.sha }),
   });

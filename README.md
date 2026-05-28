@@ -234,7 +234,7 @@ PUBLISH_BRANCH=main
 - `GITHUB_APP_PRIVATE_KEY` 支持把换行写成 `\n`。
 - 也可以用 `GITHUB_APP_PRIVATE_KEY_PATH` 指向容器内私钥文件。
 - `PUBLISH_REPO` 是唯一允许发布写入的企业 Skill 仓库。
-- GitHub 未配置时，zip 上传、审核、发布上线和 Agent 在线拉取仍可用；GitHub 导入/同步会显示未配置。
+- GitHub App 未配置时，zip 上传、公开 GitHub repo 导入、审核、发布上线和 Agent 在线拉取仍可用；私有 repo 导入和发布同步需要 GitHub App。
 
 GitHub App 需要的最小权限：
 

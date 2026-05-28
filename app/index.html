@@ -17,8 +17,8 @@
           </div>
         </div>
         <form id="loginForm" class="login-form">
-          <label>邮箱<input name="email" type="email" required value="admin@example.com" /></label>
-          <label>密码<input name="password" type="password" required value="admin123456" /></label>
+          <label>邮箱<input name="email" type="email" autocomplete="username" required value="admin@example.com" /></label>
+          <label>密码<input name="password" type="password" autocomplete="current-password" required value="admin123456" /></label>
           <button class="primary-button" type="submit">登录</button>
         </form>
       </section>
@@ -202,7 +202,7 @@
                     <option value="admin">admin</option>
                   </select>
                 </label>
-                <label>密码<input name="password" type="password" required minlength="8" /></label>
+                <label>密码<input name="password" type="password" autocomplete="new-password" required minlength="8" /></label>
                 <button class="primary-button" type="submit">创建</button>
               </form>
             </section>
