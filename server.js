@@ -241,9 +241,13 @@ async function migrate() {
       email text UNIQUE NOT NULL,
       name text NOT NULL,
       role text NOT NULL CHECK (role IN ('admin', 'member')),
+      status text NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'rejected')),
       team text NOT NULL DEFAULT 'default',
       password_hash text NOT NULL,
       password_salt text NOT NULL,
+      reviewed_by text REFERENCES users(id),
+      reviewed_at timestamptz,
+      rejection_reason text,
       created_at timestamptz NOT NULL DEFAULT now()
     );
 
@@ -314,6 +318,11 @@ async function migrate() {
     );
   `);
 
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_by text REFERENCES users(id)");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_at timestamptz");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS rejection_reason text");
+  await pool.query("UPDATE users SET status = 'active' WHERE status IS NULL");
   await pool.query("ALTER TABLE skills ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT ARRAY[]::text[]");
   await pool.query("UPDATE skills SET tags = $1 WHERE array_length(tags, 1) IS NULL", [DEFAULT_SKILL_TAGS]);
 
@@ -324,7 +333,7 @@ async function migrate() {
     const id = uid("usr");
     const { salt, hash } = hashPassword(adminPassword);
     await pool.query(
-      "INSERT INTO users (id, email, name, role, team, password_hash, password_salt) VALUES ($1, $2, $3, 'admin', 'platform', $4, $5)",
+      "INSERT INTO users (id, email, name, role, status, team, password_hash, password_salt, reviewed_at) VALUES ($1, $2, $3, 'admin', 'active', 'platform', $4, $5, now())",
       [id, adminEmail, "Platform Admin", hash, salt],
     );
   }
@@ -343,7 +352,11 @@ function toUser(row) {
     email: row.email,
     name: row.name,
     role: row.role,
+    status: row.status || "active",
     team: row.team,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    rejectionReason: row.rejection_reason,
     createdAt: row.created_at,
   };
 }
@@ -415,6 +428,7 @@ async function requireAuth(req, res, next) {
     if (!payload) throw new AppError("unauthorized", "Authentication required", 401);
     const result = await pool.query("SELECT * FROM users WHERE id = $1", [payload.sub]);
     if (result.rowCount === 0) throw new AppError("unauthorized", "Authentication required", 401);
+    if ((result.rows[0].status || "active") !== "active") throw new AppError("account_inactive", "Account is not active", 403);
     req.user = result.rows[0];
     next();
   } catch (error) {
@@ -1188,6 +1202,29 @@ app.get("/api/health", async (req, res) => {
   });
 });
 
+app.post("/api/auth/register", async (req, res, next) => {
+  try {
+    const email = assertString(req.body.email, "email").toLowerCase();
+    const name = assertString(req.body.name, "name");
+    const password = assertString(req.body.password, "password", 8, 200);
+    const team = assertString(req.body.team || "default", "team", 1, 80);
+    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    if (existing.rowCount) throw new AppError("email_exists", "Email is already registered", 409);
+    const id = uid("usr");
+    const { salt, hash } = hashPassword(password);
+    const result = await pool.query(
+      `INSERT INTO users (id, email, name, role, status, team, password_hash, password_salt)
+       VALUES ($1, $2, $3, 'member', 'pending', $4, $5, $6)
+       RETURNING *`,
+      [id, email, name, team, hash, salt],
+    );
+    await audit(null, "user_registered", "user", id, { email, team });
+    sendData(res, toUser(result.rows[0]), 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/auth/login", async (req, res, next) => {
   try {
     const email = assertString(req.body.email, "email").toLowerCase();
@@ -1196,6 +1233,9 @@ app.post("/api/auth/login", async (req, res, next) => {
     if (result.rowCount === 0 || !verifyPassword(password, result.rows[0].password_salt, result.rows[0].password_hash)) {
       throw new AppError("invalid_credentials", "Invalid email or password", 401);
     }
+    const status = result.rows[0].status || "active";
+    if (status === "pending") throw new AppError("account_pending", "Account is waiting for admin approval", 403);
+    if (status === "rejected") throw new AppError("account_rejected", result.rows[0].rejection_reason || "Account registration was rejected", 403);
     setSessionCookie(res, result.rows[0].id);
     await audit(result.rows[0].id, "login", "user", result.rows[0].id);
     sendData(res, toUser(result.rows[0]));
@@ -1215,7 +1255,12 @@ app.get("/api/me", requireAuth, async (req, res) => {
 
 app.get("/api/users", requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const result = await pool.query("SELECT * FROM users ORDER BY created_at DESC");
+    const result = await pool.query(
+      `SELECT * FROM users
+       ORDER BY
+         CASE status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
+         created_at DESC`,
+    );
     sendData(res, result.rows.map(toUser));
   } catch (error) {
     next(error);
@@ -1232,11 +1277,49 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res, next) => {
     const id = uid("usr");
     const { salt, hash } = hashPassword(password);
     const result = await pool.query(
-      "INSERT INTO users (id, email, name, role, team, password_hash, password_salt) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
-      [id, email, name, role, team, hash, salt],
+      `INSERT INTO users (id, email, name, role, status, team, password_hash, password_salt, reviewed_by, reviewed_at)
+       VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, now())
+       RETURNING *`,
+      [id, email, name, role, team, hash, salt, req.user.id],
     );
     await audit(req.user.id, "user_created", "user", id, { email, role, team });
     sendData(res, toUser(result.rows[0]), 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/users/:id/approve", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET status = 'active', reviewed_by = $1, reviewed_at = now(), rejection_reason = NULL
+       WHERE id = $2
+       RETURNING *`,
+      [req.user.id, req.params.id],
+    );
+    if (result.rowCount === 0) throw new AppError("not_found", "User not found", 404);
+    await audit(req.user.id, "user_approved", "user", req.params.id);
+    sendData(res, toUser(result.rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/users/:id/reject", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (req.params.id === req.user.id) throw new AppError("invalid_state", "Cannot reject your own account", 409);
+    const reason = assertString(req.body.reason || "Rejected by admin", "reason", 1, 1000);
+    const result = await pool.query(
+      `UPDATE users
+       SET status = 'rejected', reviewed_by = $1, reviewed_at = now(), rejection_reason = $2
+       WHERE id = $3
+       RETURNING *`,
+      [req.user.id, reason, req.params.id],
+    );
+    if (result.rowCount === 0) throw new AppError("not_found", "User not found", 404);
+    await audit(req.user.id, "user_rejected", "user", req.params.id, { reason });
+    sendData(res, toUser(result.rows[0]));
   } catch (error) {
     next(error);
   }

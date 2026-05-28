@@ -309,12 +309,19 @@ function renderUsers() {
   if (!target) return;
   target.innerHTML = users.length ? users.map((user) => `
     <tr>
-      <td>${escapeHtml(user.name)}<br><span class="muted">${escapeHtml(user.email)}</span></td>
+      <td>${escapeHtml(user.name)}<br><span class="muted">${escapeHtml(user.email)}${user.rejectionReason ? ` · ${escapeHtml(user.rejectionReason)}` : ""}</span></td>
       <td>${escapeHtml(user.team)}</td>
       <td>${badge(user.role)}</td>
+      <td>${badge(user.status)}</td>
       <td>${formatDate(user.createdAt)}</td>
+      <td>
+        <div class="actions">
+          ${user.status === "pending" ? `<button class="mini-button" data-action="approve-user" data-user-id="${user.id}" type="button">批准</button>` : ""}
+          ${user.status === "pending" ? `<button class="mini-button" data-action="reject-user" data-user-id="${user.id}" type="button">驳回</button>` : ""}
+        </div>
+      </td>
     </tr>
-  `).join("") : `<tr><td colspan="4" class="muted">暂无用户</td></tr>`;
+  `).join("") : `<tr><td colspan="6" class="muted">暂无用户</td></tr>`;
 }
 
 function renderVersionDetail() {
@@ -451,6 +458,22 @@ async function handleLogin(event) {
   }
 }
 
+async function handleRegister(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await api("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(formDataObject(form)),
+    });
+    form.reset();
+    form.elements.team.value = "default";
+    toast("注册申请已提交，等待管理员批准");
+  } catch (error) {
+    toast(`注册失败: ${error.message}`);
+  }
+}
+
 async function handleUpload(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -534,6 +557,7 @@ async function handleAction(event) {
   if (!trigger) return;
   const action = trigger.dataset.action;
   const versionId = trigger.dataset.versionId;
+  const userId = trigger.dataset.userId;
 
   try {
     if (action === "detail") {
@@ -583,6 +607,18 @@ async function handleAction(event) {
     if (action === "archive") {
       await postAction(`/api/skill-versions/${versionId}/archive`);
       toast("已下架");
+      return;
+    }
+    if (action === "approve-user") {
+      await postAction(`/api/users/${userId}/approve`);
+      toast("用户已批准");
+      return;
+    }
+    if (action === "reject-user") {
+      const reason = window.prompt("请输入驳回原因");
+      if (!reason) return;
+      await postAction(`/api/users/${userId}/reject`, { reason });
+      toast("用户已驳回");
     }
   } catch (error) {
     toast(`操作失败: ${error.message}`);
@@ -591,6 +627,7 @@ async function handleAction(event) {
 
 function bindEvents() {
   document.getElementById("loginForm").addEventListener("submit", handleLogin);
+  document.getElementById("registerForm").addEventListener("submit", handleRegister);
   document.getElementById("uploadForm").addEventListener("submit", handleUpload);
   document.getElementById("githubImportForm").addEventListener("submit", handleGithubImport);
   document.getElementById("userForm").addEventListener("submit", handleCreateUser);

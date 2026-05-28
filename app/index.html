@@ -21,6 +21,14 @@
           <label>密码<input name="password" type="password" autocomplete="current-password" required value="admin123456" /></label>
           <button class="primary-button" type="submit">登录</button>
         </form>
+        <div class="auth-divider"><span>申请团队账号</span></div>
+        <form id="registerForm" class="login-form">
+          <label>姓名<input name="name" autocomplete="name" required /></label>
+          <label>邮箱<input name="email" type="email" autocomplete="email" required /></label>
+          <label>团队<input name="team" autocomplete="organization" required value="default" /></label>
+          <label>密码<input name="password" type="password" autocomplete="new-password" required minlength="8" /></label>
+          <button class="ghost-button" type="submit">提交注册申请</button>
+        </form>
       </section>
     </div>
 
@@ -191,6 +199,7 @@
             <section class="panel">
               <div class="panel-head">
                 <h2>创建用户</h2>
+                <span class="muted">管理员创建的账号会直接激活</span>
               </div>
               <form class="form-grid user-form" id="userForm">
                 <label>姓名<input name="name" required /></label>
@@ -217,7 +226,9 @@
                       <th>用户</th>
                       <th>团队</th>
                       <th>角色</th>
+                      <th>状态</th>
                       <th>创建时间</th>
+                      <th>操作</th>
                     </tr>
                   </thead>
                   <tbody id="userRows"></tbody>

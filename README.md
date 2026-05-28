@@ -135,6 +135,7 @@ ADMIN_PASSWORD: 强密码
 ## 功能
 
 - 内置账号登录：`admin` / `member` 两种角色。
+- 自助注册：新用户提交注册申请，管理员批准后才能登录。
 - 团队上传：上传包含 `SKILL.md` 的 zip 包。
 - GitHub 导入：粘贴 GitHub repo、tree 文件夹或 blob/SKILL.md 链接即可导入。
 - 平台标签：支持小红书、京东、抖音、ISV、Agent 基础提升等标签和 Team 归属展示。
@@ -244,22 +245,26 @@ GitHub App 需要的最小权限：
 ## 使用流程
 
 1. 管理员登录。
-2. 在用户管理中创建团队成员。
-3. 成员上传 zip，或粘贴 GitHub 链接导入 Skill。
-4. 系统生成草稿和扫描报告。
-5. 成员提交审核。
-6. 管理员批准或驳回。
-7. 管理员发布上线，系统生成公开只读下载链接和 Agent 安装命令。
-8. 如已配置 GitHub App，可同步到 `PUBLISH_REPO/skills/{slug}/`。
-9. 用户在 Skill 详情页下载 zip 或复制安装命令。
+2. 团队成员可在登录页提交注册申请，或由管理员在用户管理中直接创建账号。
+3. 管理员在用户管理中批准或驳回注册申请。
+4. 成员上传 zip，或粘贴 GitHub 链接导入 Skill。
+5. 系统生成草稿和扫描报告。
+6. 成员提交审核。
+7. 管理员批准或驳回。
+8. 管理员发布上线，系统生成公开只读下载链接和 Agent 安装命令。
+9. 如已配置 GitHub App，可同步到 `PUBLISH_REPO/skills/{slug}/`。
+10. 用户在 Skill 详情页下载 zip 或复制安装命令。
 
 ## API
 
 - `POST /api/auth/login`
+- `POST /api/auth/register`
 - `POST /api/auth/logout`
 - `GET /api/me`
 - `GET /api/users`
 - `POST /api/users`
+- `POST /api/users/:id/approve`
+- `POST /api/users/:id/reject`
 - `POST /api/skills/uploads`
 - `POST /api/skills/imports/github`
 - `GET /api/skills`

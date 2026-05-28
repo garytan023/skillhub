@@ -44,7 +44,7 @@ body {
 }
 
 .login-panel {
-  width: min(420px, 100%);
+  width: min(460px, 100%);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -64,6 +64,23 @@ body {
 .login-form {
   display: grid;
   gap: 14px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 20px 0 14px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  background: var(--line);
+  flex: 1;
 }
 
 button,
@@ -856,7 +873,8 @@ tr:last-child td {
 
 .badge.medium,
 .badge.review,
-.badge.draft {
+.badge.draft,
+.badge.pending {
   color: var(--amber);
   background: #fff8e8;
 }
