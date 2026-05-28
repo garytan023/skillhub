@@ -77,12 +77,16 @@ function publicDownloadHref(version) {
   return absoluteClientUrl(version?.publicDownloadPath || version?.publicDownloadUrl || version?.downloadUrl);
 }
 
+function installScriptHref(version) {
+  return absoluteClientUrl(version?.installScriptPath || version?.installScriptUrl);
+}
+
 function authenticatedDownloadHref(version) {
   return absoluteClientUrl(version?.downloadUrl || version?.authenticatedDownloadUrl);
 }
 
 function installCommand(version) {
-  const script = absoluteClientUrl(version?.installScriptPath || version?.installScriptUrl);
+  const script = installScriptHref(version);
   return script ? `curl -fsSL ${script} | sh` : version?.installCommand || "";
 }
 
@@ -184,7 +188,6 @@ function renderSkillCards() {
     const version = versionForSkill(skill);
     const isPublished = version?.status === "published";
     const description = skill.description || version?.manifest?.description || "等待补充 Skill 描述。";
-    const installHref = isPublished ? absoluteClientUrl(version.installScriptPath || version.installScriptUrl) : "";
     const downloadHref = isPublished ? publicDownloadHref(version) : "";
     const permissions = version?.permissions?.length ? version.permissions.slice(0, 3).join(", ") : "no permissions";
     return `
@@ -212,7 +215,8 @@ function renderSkillCards() {
           <span>${escapeHtml(permissions)}</span>
         </div>
         <div class="skill-card-actions">
-          ${isPublished ? `<a class="install-button" href="${escapeHtml(installHref)}">安装脚本</a>` : `<span class="install-button disabled">待发布</span>`}
+          ${isPublished ? `<button class="install-button" data-action="copy-install" data-version-id="${version.id}" type="button">复制安装命令</button>` : `<span class="install-button disabled">待发布</span>`}
+          ${isPublished ? `<a class="mini-link" href="${escapeHtml(installScriptHref(version))}" target="_blank" rel="noreferrer">脚本链接</a>` : ""}
           ${isPublished ? `<a class="mini-link" href="${escapeHtml(downloadHref)}">下载 zip</a>` : ""}
           <button class="mini-button" data-action="detail" data-skill-id="${skill.id}" data-version-id="${version?.id || ""}" type="button">详情</button>
         </div>
@@ -325,6 +329,7 @@ function renderVersionDetail() {
   const isPublished = selectedVersion.status === "published";
   const install = isPublished ? installCommand(selectedVersion) : "发布上线后显示在线拉取命令";
   const zipHref = isPublished ? publicDownloadHref(selectedVersion) : authenticatedDownloadHref(selectedVersion);
+  const scriptHref = isPublished ? installScriptHref(selectedVersion) : "";
   target.innerHTML = `
     <div>
       <h3>${escapeHtml(skill?.name || selectedVersion.skillId)} @ ${escapeHtml(selectedVersion.version)}</h3>
@@ -339,7 +344,11 @@ function renderVersionDetail() {
     <div class="detail-section">
       <strong>Agent 在线拉取</strong>
       <code>${escapeHtml(install)}</code>
-      <a class="mini-link" href="${escapeHtml(zipHref)}">${isPublished ? "直接下载 zip" : "管理员下载 zip"}</a>
+      <div class="detail-actions">
+        ${isPublished ? `<button class="mini-button" data-action="copy-install" data-version-id="${selectedVersion.id}" type="button">复制命令</button>` : ""}
+        ${isPublished ? `<a class="mini-link" href="${escapeHtml(scriptHref)}" target="_blank" rel="noreferrer">脚本链接</a>` : ""}
+        <a class="mini-link" href="${escapeHtml(zipHref)}">${isPublished ? "下载 zip" : "管理员下载 zip"}</a>
+      </div>
     </div>
     <div class="detail-section">
       <strong>来源</strong>
@@ -504,6 +513,22 @@ async function postAction(route, body = {}) {
   await refreshAll();
 }
 
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
 async function handleAction(event) {
   const trigger = event.target.closest("[data-action]");
   if (!trigger) return;
@@ -516,6 +541,16 @@ async function handleAction(event) {
       selectedVersion = versions.find((item) => item.id === versionId) || versions[0] || null;
       renderVersionDetail();
       document.getElementById("detailPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (action === "copy-install") {
+      const version = allVersions().find((item) => item.id === versionId) || selectedVersion;
+      if (!version || version.status !== "published") {
+        toast("发布上线后才能复制安装命令");
+        return;
+      }
+      await copyText(installCommand(version));
+      toast("安装命令已复制");
       return;
     }
     if (action === "submit-review") {

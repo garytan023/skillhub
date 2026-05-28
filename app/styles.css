@@ -761,12 +761,15 @@ textarea {
   padding: 0 14px;
   text-decoration: none;
   font-weight: 800;
+  font: inherit;
+  cursor: pointer;
 }
 
 .install-button.disabled {
   color: var(--muted);
   background: rgba(234, 223, 210, 0.42);
   border-color: var(--line);
+  cursor: default;
 }
 
 .empty-card {
@@ -992,6 +995,12 @@ tr:last-child td {
   background: #f0f7f3;
   color: var(--ink);
   overflow-x: auto;
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .file-list {
