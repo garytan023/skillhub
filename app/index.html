@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Skill Hub</title>
+    <title>WPPMEDIA MD SkillHub</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="login-screen" id="loginScreen">
       <section class="login-panel">
         <div class="brand large">
-          <div class="brand-mark">S</div>
+          <div class="brand-mark">MD</div>
           <div>
-            <strong>Skill Hub</strong>
+            <strong>WPPMEDIA MD SkillHub</strong>
             <span>企业 Skill 上传、审核、发布中心</span>
           </div>
         </div>
@@ -27,9 +27,9 @@
     <div class="shell hidden" id="appShell">
       <aside class="sidebar" aria-label="主导航">
         <div class="brand">
-          <div class="brand-mark">S</div>
+          <div class="brand-mark">MD</div>
           <div>
-            <strong>Skill Hub</strong>
+            <strong>WPPMEDIA MD SkillHub</strong>
             <span id="sessionLabel">Local</span>
           </div>
         </div>
@@ -55,11 +55,44 @@
         </header>
 
         <section class="view active" id="view-catalog">
+          <section class="market-hero">
+            <div class="hero-copy">
+              <div class="hero-kicker">WPP Media</div>
+              <h2>MD SkillHub</h2>
+              <p>团队共用的 Agent Skill 市场。审核发布后，可直接在线拉取、下载和安装。</p>
+            </div>
+            <div class="hero-search">
+              <div class="search-box">
+                <span class="search-icon">⌕</span>
+                <input class="search-input" id="skillSearch" placeholder="搜索 Skill、slug、团队" />
+                <button class="primary-button" type="button">Search</button>
+              </div>
+              <div class="search-chips">
+                <button type="button" data-search-chip="published">published</button>
+                <button type="button" data-search-chip="github">GitHub</button>
+                <button type="button" data-search-chip="upload">upload</button>
+                <button type="button" data-search-chip="">all skills</button>
+              </div>
+            </div>
+          </section>
+
           <div class="metrics-grid" id="metrics"></div>
+
+          <section class="market-section">
+            <div class="market-head">
+              <div>
+                <span>FEATURED SKILLS</span>
+                <h2>可安装 Skill</h2>
+              </div>
+              <button class="ghost-button" id="focusSubmit" type="button">上传 / 导入</button>
+            </div>
+            <div class="skill-card-grid" id="skillCards"></div>
+          </section>
+
           <section class="panel">
             <div class="panel-head">
-              <h2>Skill 列表</h2>
-              <input class="search-input" id="skillSearch" placeholder="搜索名称、slug、团队" />
+              <h2>管理列表</h2>
+              <span class="muted">审核、发布状态和同步记录</span>
             </div>
             <div class="table-wrap">
               <table>

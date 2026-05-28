@@ -1,5 +1,5 @@
 const viewMeta = {
-  catalog: ["Skill 目录", "浏览已提交和已发布的企业 Skill。"],
+  catalog: ["WPPMEDIA MD SkillHub", "浏览、安装和管理团队发布的 Agent Skill。"],
   submit: ["上传 / 导入", "团队成员上传 zip 或粘贴 GitHub 链接导入 Skill。"],
   review: ["审核发布", "管理员批准、驳回、发布上线并按需同步 GitHub。"],
   users: ["用户管理", "创建团队成员和管理员账号。"],
@@ -83,6 +83,28 @@ function versionForSkill(skill) {
   return versions[0];
 }
 
+function currentSkillFilter() {
+  return document.getElementById("skillSearch")?.value?.toLowerCase().trim() || "";
+}
+
+function filteredSkills() {
+  const query = currentSkillFilter();
+  return skills.filter((skill) => {
+    const version = versionForSkill(skill);
+    return `${skill.name} ${skill.slug} ${skill.ownerTeam} ${version?.status || ""} ${version?.sourceType || ""}`.toLowerCase().includes(query);
+  });
+}
+
+function skillInitials(skill) {
+  return String(skill?.name || skill?.slug || "MD")
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
 function allVersions() {
   return [...versionsBySkill.values()].flat();
 }
@@ -141,9 +163,49 @@ function renderMetrics() {
   `).join("");
 }
 
+function renderSkillCards() {
+  const target = document.getElementById("skillCards");
+  if (!target) return;
+  const filtered = filteredSkills();
+  target.innerHTML = filtered.length ? filtered.map((skill) => {
+    const version = versionForSkill(skill);
+    const isPublished = version?.status === "published";
+    const description = skill.description || version?.manifest?.description || "等待补充 Skill 描述。";
+    const installHref = isPublished ? absoluteClientUrl(version.installScriptPath || version.installScriptUrl) : "";
+    const downloadHref = isPublished ? publicDownloadHref(version) : "";
+    const permissions = version?.permissions?.length ? version.permissions.slice(0, 3).join(", ") : "no permissions";
+    return `
+      <article class="skill-card">
+        <div class="skill-card-top">
+          <div class="skill-icon">${escapeHtml(skillInitials(skill))}</div>
+          <div class="skill-card-meta">
+            <strong>${escapeHtml(skill.name)}</strong>
+            <span>${escapeHtml(skill.slug)} · ${escapeHtml(skill.ownerTeam)}</span>
+          </div>
+        </div>
+        <p>${escapeHtml(description)}</p>
+        <div class="skill-card-tags">
+          ${badge(version?.status)}
+          ${badge(version?.risk)}
+          ${badge(version?.sourceType)}
+        </div>
+        <div class="skill-card-stats">
+          <span>${escapeHtml(version?.version || "-")}</span>
+          <span>${escapeHtml(version?.fileManifest?.length || 0)} files</span>
+          <span>${escapeHtml(permissions)}</span>
+        </div>
+        <div class="skill-card-actions">
+          ${isPublished ? `<a class="install-button" href="${escapeHtml(installHref)}">安装脚本</a>` : `<span class="install-button disabled">待发布</span>`}
+          ${isPublished ? `<a class="mini-link" href="${escapeHtml(downloadHref)}">下载 zip</a>` : ""}
+          <button class="mini-button" data-action="detail" data-skill-id="${skill.id}" data-version-id="${version?.id || ""}" type="button">详情</button>
+        </div>
+      </article>
+    `;
+  }).join("") : `<div class="empty-card">暂无匹配 Skill</div>`;
+}
+
 function renderSkillRows() {
-  const query = document.getElementById("skillSearch")?.value?.toLowerCase().trim() || "";
-  const filtered = skills.filter((skill) => `${skill.name} ${skill.slug} ${skill.ownerTeam}`.toLowerCase().includes(query));
+  const filtered = filteredSkills();
   document.getElementById("skillRows").innerHTML = filtered.length ? filtered.map((skill) => {
     const version = versionForSkill(skill);
     return `
@@ -288,6 +350,7 @@ function render() {
   renderShell();
   if (!session) return;
   renderMetrics();
+  renderSkillCards();
   renderSkillRows();
   renderMySubmissions();
   renderReviewList();
@@ -469,7 +532,18 @@ function bindEvents() {
   document.getElementById("uploadForm").addEventListener("submit", handleUpload);
   document.getElementById("githubImportForm").addEventListener("submit", handleGithubImport);
   document.getElementById("userForm").addEventListener("submit", handleCreateUser);
-  document.getElementById("skillSearch").addEventListener("input", renderSkillRows);
+  document.getElementById("skillSearch").addEventListener("input", () => {
+    renderSkillCards();
+    renderSkillRows();
+  });
+  document.querySelectorAll("[data-search-chip]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.getElementById("skillSearch").value = button.dataset.searchChip;
+      renderSkillCards();
+      renderSkillRows();
+    });
+  });
+  document.getElementById("focusSubmit").addEventListener("click", () => setView("submit"));
   document.getElementById("refreshData").addEventListener("click", () => refreshAll().then(() => toast("已刷新")));
   document.getElementById("logoutButton").addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);

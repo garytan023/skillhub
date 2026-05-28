@@ -1,4 +1,4 @@
-# Skill Hub
+# WPPMEDIA MD SkillHub
 
 企业内网 Skill 上传、导入、审核、发布与分享中心。第一版支持网页上传 zip、GitHub 链接导入、管理员审核发布、Agent 在线拉取安装、同步到企业 GitHub Skill 仓库，并可用 Docker Compose 部署。
 
