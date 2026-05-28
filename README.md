@@ -62,18 +62,19 @@ services:
   skillhub-app:
     image: node:22-alpine
     working_dir: /app
-    command: >
-      sh -c "
-        set -eu;
-        apk add --no-cache curl tar;
-        rm -rf /tmp/skillhub;
-        mkdir -p /tmp/skillhub /app;
-        curl -L https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz
-          | tar -xz --strip-components=1 -C /tmp/skillhub;
-        cp -a /tmp/skillhub/. /app/;
-        npm install --omit=dev;
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        apk add --no-cache curl tar
+        rm -rf /tmp/skillhub /tmp/skillhub.tar.gz
+        mkdir -p /tmp/skillhub /app
+        curl -fsSL -o /tmp/skillhub.tar.gz https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz
+        tar -xzf /tmp/skillhub.tar.gz --strip-components=1 -C /tmp/skillhub
+        cp -a /tmp/skillhub/. /app/
+        npm install --omit=dev
         node server.js
-      "
     ports:
       - "4777:4777"
     environment:
