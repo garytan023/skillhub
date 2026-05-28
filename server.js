@@ -26,6 +26,14 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "dev-only-change-me";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const PUBLISH_REPO = process.env.PUBLISH_REPO || "";
 const PUBLISH_BRANCH = process.env.PUBLISH_BRANCH || "main";
+const DEFAULT_SKILL_TAGS = ["Agent 基础提升"];
+const TAG_KEYWORDS = [
+  { tag: "小红书", pattern: /小红书|xhs|rednote/i },
+  { tag: "京东", pattern: /京东|jd\.com|jingdong/i },
+  { tag: "抖音", pattern: /抖音|douyin|tiktok/i },
+  { tag: "ISV", pattern: /\bisv\b|服务商|集成商/i },
+  { tag: "Agent 基础提升", pattern: /agent|skill|workflow|prompt|mcp|自动化|基础提升/i },
+];
 
 if (process.env.NODE_ENV === "production" && SESSION_SECRET === "dev-only-change-me") {
   throw new Error("SESSION_SECRET must be configured in production");
@@ -111,6 +119,30 @@ function assertString(value, field, min = 1, max = 300) {
     throw error;
   }
   return text;
+}
+
+function normalizeTags(...values) {
+  const raw = values.flatMap((value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === "object") return [];
+    return String(value).split(/[,，;；\n]/);
+  });
+  const seen = new Set();
+  return raw
+    .map((item) => String(item || "").trim())
+    .filter((item) => item && item.length <= 40)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 12);
+}
+
+function inferTagsFromText(text) {
+  return TAG_KEYWORDS.filter(({ pattern }) => pattern.test(text)).map(({ tag }) => tag);
 }
 
 function parseCookies(header) {
@@ -220,6 +252,7 @@ async function migrate() {
       name text NOT NULL,
       description text NOT NULL DEFAULT '',
       owner_team text NOT NULL DEFAULT 'default',
+      tags text[] NOT NULL DEFAULT ARRAY[]::text[],
       created_by text REFERENCES users(id),
       current_version_id text,
       created_at timestamptz NOT NULL DEFAULT now(),
@@ -280,6 +313,9 @@ async function migrate() {
     );
   `);
 
+  await pool.query("ALTER TABLE skills ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT ARRAY[]::text[]");
+  await pool.query("UPDATE skills SET tags = $1 WHERE array_length(tags, 1) IS NULL", [DEFAULT_SKILL_TAGS]);
+
   const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
   const adminPassword = process.env.ADMIN_PASSWORD || "admin123456";
   const existing = await pool.query("SELECT id FROM users WHERE email = $1", [adminEmail]);
@@ -318,6 +354,7 @@ function toSkill(row) {
     name: row.name,
     description: row.description,
     ownerTeam: row.owner_team,
+    tags: row.tags || [],
     currentVersionId: row.current_version_id,
     createdBy: row.created_by,
     createdAt: row.created_at,
@@ -592,6 +629,16 @@ function parseSkillPackage(entries, source) {
   const name = manifest.name || frontmatter.name || path.basename(source.sourcePath || "skill");
   const slug = slugify(manifest.name || frontmatter.name || name);
   const version = source.version || manifest.version || frontmatter.version || source.sourceRef || nowIso().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const tags = normalizeTags(
+    source.tags,
+    manifest.tags,
+    manifest.platforms,
+    manifest.categories,
+    frontmatter.tags,
+    frontmatter.platforms,
+    frontmatter.categories,
+    inferTagsFromText(`${name}\n${body}\n${JSON.stringify(manifest)}`),
+  );
   const scanReport = {
     scannedAt: nowIso(),
     fileCount: fileManifest.length,
@@ -611,6 +658,7 @@ function parseSkillPackage(entries, source) {
       slug,
       description: manifest.description || frontmatter.description || body.split(/\r?\n/).find((line) => line.trim()) || "",
       ownerTeam: source.ownerTeam || "default",
+      tags: tags.length ? tags : DEFAULT_SKILL_TAGS,
     },
     version: {
       version,
@@ -665,6 +713,8 @@ function buildReleaseMetadata(version, actorId = null) {
       id: version.skill_id,
       slug: version.slug,
       name: version.name,
+      ownerTeam: version.owner_team,
+      tags: version.tags || [],
     },
     version: {
       id: version.id,
@@ -703,11 +753,14 @@ async function upsertSkillPackage(parsed, userId) {
     const finalSkillId = existing.rowCount ? existing.rows[0].id : skillId;
     if (existing.rowCount === 0) {
       await client.query(
-        "INSERT INTO skills (id, slug, name, description, owner_team, created_by) VALUES ($1, $2, $3, $4, $5, $6)",
-        [finalSkillId, parsed.skill.slug, parsed.skill.name, parsed.skill.description, parsed.skill.ownerTeam, userId],
+        "INSERT INTO skills (id, slug, name, description, owner_team, tags, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [finalSkillId, parsed.skill.slug, parsed.skill.name, parsed.skill.description, parsed.skill.ownerTeam, parsed.skill.tags, userId],
       );
     } else {
-      await client.query("UPDATE skills SET name = $1, description = $2, updated_at = now() WHERE id = $3", [parsed.skill.name, parsed.skill.description, finalSkillId]);
+      await client.query(
+        "UPDATE skills SET name = $1, description = $2, owner_team = $3, tags = $4, updated_at = now() WHERE id = $5",
+        [parsed.skill.name, parsed.skill.description, parsed.skill.ownerTeam, parsed.skill.tags, finalSkillId],
+      );
     }
     const duplicate = await client.query("SELECT id FROM skill_versions WHERE skill_id = $1 AND version = $2", [finalSkillId, parsed.version.version]);
     if (duplicate.rowCount) {
@@ -932,7 +985,7 @@ async function importGithubPackage(payload) {
 
 async function loadVersion(versionId) {
   const result = await pool.query(
-    `SELECT sv.*, s.slug, s.name, s.description, s.owner_team
+    `SELECT sv.*, s.slug, s.name, s.description, s.owner_team, s.tags
      FROM skill_versions sv
      JOIN skills s ON s.id = sv.skill_id
      WHERE sv.id = $1`,
@@ -1093,6 +1146,13 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res, next) => {
   }
 });
 
+function ownerTeamForRequest(user, requestedTeam) {
+  if (user.role === "admin" && requestedTeam) {
+    return assertString(requestedTeam, "ownerTeam", 1, 80);
+  }
+  return user.team;
+}
+
 app.post("/api/skills/uploads", requireAuth, upload.single("package"), async (req, res, next) => {
   try {
     if (!req.file) throw new AppError("missing_upload", "A zip package is required", 422);
@@ -1103,7 +1163,8 @@ app.post("/api/skills/uploads", requireAuth, upload.single("package"), async (re
       sourcePath: req.file.originalname,
       sourceRef: null,
       version: req.body.version || undefined,
-      ownerTeam: req.user.team,
+      ownerTeam: ownerTeamForRequest(req.user, req.body.ownerTeam),
+      tags: req.body.tags,
     });
     const result = await upsertSkillPackage(parsed, req.user.id);
     await fs.copyFile(req.file.path, path.join(UPLOAD_DIR, `${result.versionId}.zip`));
@@ -1117,7 +1178,11 @@ app.post("/api/skills/uploads", requireAuth, upload.single("package"), async (re
 
 app.post("/api/skills/imports/github", requireAuth, async (req, res, next) => {
   try {
-    const parsed = await importGithubPackage({ ...req.body, ownerTeam: req.user.team });
+    const parsed = await importGithubPackage({
+      ...req.body,
+      ownerTeam: ownerTeamForRequest(req.user, req.body.ownerTeam),
+      tags: req.body.tags,
+    });
     const result = await upsertSkillPackage(parsed, req.user.id);
     sendData(res, result, 201);
   } catch (error) {
@@ -1342,7 +1407,7 @@ function requestBaseUrl(req) {
 
 async function loadPublishedVersionBySlug(slug, version) {
   const result = await pool.query(
-    `SELECT sv.*, s.slug, s.name, s.description, s.owner_team
+    `SELECT sv.*, s.slug, s.name, s.description, s.owner_team, s.tags
      FROM skill_versions sv
      JOIN skills s ON s.id = sv.skill_id
      WHERE s.slug = $1 AND sv.version = $2 AND sv.status = 'published'`,

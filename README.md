@@ -137,6 +137,7 @@ ADMIN_PASSWORD: 强密码
 - 内置账号登录：`admin` / `member` 两种角色。
 - 团队上传：上传包含 `SKILL.md` 的 zip 包。
 - GitHub 导入：粘贴 GitHub repo、tree 文件夹或 blob/SKILL.md 链接即可导入。
+- 平台标签：支持小红书、京东、抖音、ISV、Agent 基础提升等标签和 Team 归属展示。
 - 自动扫描：解析 `SKILL.md` frontmatter、可选 `skill.manifest.json`、文件清单、内容 hash、权限和风险等级。
 - 审核发布：成员提交审核，管理员批准、驳回、发布、下架。
 - 在线拉取：发布上线后生成公开只读下载接口和 Agent 安装命令。

@@ -64,13 +64,15 @@
             <div class="hero-search">
               <div class="search-box">
                 <span class="search-icon">⌕</span>
-                <input class="search-input" id="skillSearch" placeholder="搜索 Skill、slug、团队" />
+                <input class="search-input" id="skillSearch" placeholder="搜索 Skill、平台标签、Team" />
                 <button class="primary-button" type="button">Search</button>
               </div>
               <div class="search-chips">
-                <button type="button" data-search-chip="published">published</button>
-                <button type="button" data-search-chip="github">GitHub</button>
-                <button type="button" data-search-chip="upload">upload</button>
+                <button type="button" data-search-chip="小红书">小红书</button>
+                <button type="button" data-search-chip="京东">京东</button>
+                <button type="button" data-search-chip="抖音">抖音</button>
+                <button type="button" data-search-chip="ISV">ISV</button>
+                <button type="button" data-search-chip="Agent 基础提升">Agent 基础提升</button>
                 <button type="button" data-search-chip="">all skills</button>
               </div>
             </div>
@@ -100,6 +102,8 @@
                   <tr>
                     <th>Skill</th>
                     <th>版本</th>
+                    <th>Team</th>
+                    <th>标签</th>
                     <th>状态</th>
                     <th>风险</th>
                     <th>来源</th>
@@ -127,6 +131,8 @@
               </div>
               <form class="form-grid upload-form" id="uploadForm">
                 <label>版本号<input name="version" required placeholder="v0.1.0" /></label>
+                <label>归属 Team<input name="ownerTeam" placeholder="default / MD / ISV" /></label>
+                <label>平台 / 标签<input name="tags" placeholder="小红书, 京东, 抖音, ISV, Agent 基础提升" /></label>
                 <label>Skill zip 包<input name="package" type="file" accept=".zip,application/zip" required /></label>
                 <button class="primary-button" type="submit">上传并扫描</button>
               </form>
@@ -140,6 +146,8 @@
               <form class="form-grid github-form" id="githubImportForm">
                 <label>GitHub 链接<input name="url" required placeholder="https://github.com/owner/repo/tree/main/skills/demo-report" /></label>
                 <label>版本号<input name="version" placeholder="默认使用 ref" /></label>
+                <label>归属 Team<input name="ownerTeam" placeholder="default / MD / ISV" /></label>
+                <label>平台 / 标签<input name="tags" placeholder="小红书, 京东, 抖音, ISV" /></label>
                 <button class="primary-button" type="submit">导入并扫描</button>
               </form>
               <p class="help-text">可直接粘贴 repo、tree 文件夹或 blob/SKILL.md 链接。GitHub 导入使用 GitHub App 权限读取仓库，不执行脚本。</p>

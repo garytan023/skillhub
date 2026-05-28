@@ -59,6 +59,15 @@ function badge(value) {
   return `<span class="badge ${escapeHtml(value)}">${escapeHtml(value || "-")}</span>`;
 }
 
+function tagPill(value) {
+  return `<span class="platform-tag">${escapeHtml(value)}</span>`;
+}
+
+function renderTags(tags, fallback = "未分类") {
+  const values = Array.isArray(tags) && tags.length ? tags : [fallback];
+  return values.map(tagPill).join("");
+}
+
 function absoluteClientUrl(value) {
   if (!value) return "";
   return new URL(value, window.location.origin).href;
@@ -91,7 +100,7 @@ function filteredSkills() {
   const query = currentSkillFilter();
   return skills.filter((skill) => {
     const version = versionForSkill(skill);
-    return `${skill.name} ${skill.slug} ${skill.ownerTeam} ${version?.status || ""} ${version?.sourceType || ""}`.toLowerCase().includes(query);
+    return `${skill.name} ${skill.slug} ${skill.ownerTeam} ${(skill.tags || []).join(" ")} ${version?.status || ""} ${version?.sourceType || ""}`.toLowerCase().includes(query);
   });
 }
 
@@ -140,6 +149,10 @@ function renderShell() {
       : "GitHub 未配置";
   githubStatus.classList.toggle("online", Boolean(health.githubSyncConfigured));
   githubStatus.classList.toggle("offline", !health.githubSyncConfigured);
+  document.querySelectorAll('input[name="ownerTeam"]').forEach((input) => {
+    if (!input.value) input.value = session.team || "default";
+    input.readOnly = !canAdmin();
+  });
 }
 
 function renderMetrics() {
@@ -180,16 +193,20 @@ function renderSkillCards() {
           <div class="skill-icon">${escapeHtml(skillInitials(skill))}</div>
           <div class="skill-card-meta">
             <strong>${escapeHtml(skill.name)}</strong>
-            <span>${escapeHtml(skill.slug)} · ${escapeHtml(skill.ownerTeam)}</span>
+            <span>${escapeHtml(skill.slug)}</span>
           </div>
         </div>
         <p>${escapeHtml(description)}</p>
+        <div class="skill-card-tags platform-tags">
+          ${renderTags(skill.tags)}
+        </div>
         <div class="skill-card-tags">
           ${badge(version?.status)}
           ${badge(version?.risk)}
           ${badge(version?.sourceType)}
         </div>
         <div class="skill-card-stats">
+          <span>Team ${escapeHtml(skill.ownerTeam || "-")}</span>
           <span>${escapeHtml(version?.version || "-")}</span>
           <span>${escapeHtml(version?.fileManifest?.length || 0)} files</span>
           <span>${escapeHtml(permissions)}</span>
@@ -213,10 +230,12 @@ function renderSkillRows() {
         <td>
           <div class="row-title">
             <strong>${escapeHtml(skill.name)}</strong>
-            <span>${escapeHtml(skill.slug)} · ${escapeHtml(skill.ownerTeam)}</span>
+            <span>${escapeHtml(skill.slug)}</span>
           </div>
         </td>
         <td>${escapeHtml(version?.version || "-")}</td>
+        <td>${escapeHtml(skill.ownerTeam || "-")}</td>
+        <td><div class="platform-tags compact">${renderTags(skill.tags)}</div></td>
         <td>${badge(version?.status)}</td>
         <td>${badge(version?.risk)}</td>
         <td>${escapeHtml(version?.sourceType || "-")}<br><span class="muted">${escapeHtml(version?.sourceRepo || version?.sourcePath || "-")}</span></td>
@@ -229,7 +248,7 @@ function renderSkillRows() {
         </td>
       </tr>
     `;
-  }).join("") : `<tr><td colspan="7" class="muted">暂无 Skill</td></tr>`;
+  }).join("") : `<tr><td colspan="9" class="muted">暂无 Skill</td></tr>`;
 }
 
 function renderMySubmissions() {
@@ -311,6 +330,11 @@ function renderVersionDetail() {
       <h3>${escapeHtml(skill?.name || selectedVersion.skillId)} @ ${escapeHtml(selectedVersion.version)}</h3>
       <p class="muted">${escapeHtml(skill?.description || "")}</p>
       <div class="detail-badges">${badge(selectedVersion.status)} ${badge(selectedVersion.risk)} ${badge(selectedVersion.sourceType)}</div>
+    </div>
+    <div class="detail-section">
+      <strong>Team / 标签</strong>
+      <p>${escapeHtml(skill?.ownerTeam || "-")}</p>
+      <div class="platform-tags">${renderTags(skill?.tags)}</div>
     </div>
     <div class="detail-section">
       <strong>Agent 在线拉取</strong>
@@ -428,6 +452,7 @@ async function handleUpload(event) {
       body: payload,
     });
     form.reset();
+    resetOwnerTeamFields();
     await refreshAll();
     toast("上传完成，已生成草稿");
   } catch (error) {
@@ -445,6 +470,7 @@ async function handleGithubImport(event) {
       body: JSON.stringify(data),
     });
     form.reset();
+    resetOwnerTeamFields();
     await refreshAll();
     toast("GitHub 导入完成，已生成草稿");
   } catch (error) {
@@ -462,6 +488,7 @@ async function handleCreateUser(event) {
     });
     form.reset();
     form.elements.team.value = "default";
+    resetOwnerTeamFields();
     await refreshAll();
     toast("用户已创建");
   } catch (error) {
@@ -536,6 +563,10 @@ function bindEvents() {
     renderSkillCards();
     renderSkillRows();
   });
+  document.querySelector(".search-box .primary-button").addEventListener("click", () => {
+    renderSkillCards();
+    renderSkillRows();
+  });
   document.querySelectorAll("[data-search-chip]").forEach((button) => {
     button.addEventListener("click", () => {
       document.getElementById("skillSearch").value = button.dataset.searchChip;
@@ -554,6 +585,13 @@ function bindEvents() {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
   document.body.addEventListener("click", handleAction);
+}
+
+function resetOwnerTeamFields() {
+  document.querySelectorAll('input[name="ownerTeam"]').forEach((input) => {
+    input.value = session?.team || "default";
+    input.readOnly = !canAdmin();
+  });
 }
 
 bindEvents();

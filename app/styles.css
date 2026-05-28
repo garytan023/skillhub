@@ -442,7 +442,7 @@ h2 {
 }
 
 .github-form {
-  grid-template-columns: minmax(260px, 2fr) minmax(140px, 1fr) auto;
+  grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(140px, 1fr)) auto;
 }
 
 .compact-form label:nth-child(2) {
@@ -643,7 +643,7 @@ textarea {
 
 .skill-card {
   display: grid;
-  grid-template-rows: auto minmax(66px, 1fr) auto auto auto;
+  grid-template-rows: auto minmax(66px, 1fr) auto auto auto auto;
   gap: 14px;
   padding: 18px;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
@@ -707,6 +707,29 @@ textarea {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.platform-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.platform-tags.compact {
+  max-width: 220px;
+}
+
+.platform-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(80, 165, 104, 0.25);
+  background: rgba(239, 249, 244, 0.72);
+  color: #23744a;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .skill-card-stats {
