@@ -264,7 +264,7 @@ async function migrate() {
 async function audit(actorId, action, targetType, targetId, metadata = {}) {
   await pool.query(
     "INSERT INTO audit_logs (id, actor_id, action, target_type, target_id, metadata) VALUES ($1, $2, $3, $4, $5, $6)",
-    [uid("audit"), actorId || null, action, targetType, targetId, metadata],
+    [uid("audit"), actorId || null, action, targetType, targetId, JSON.stringify(metadata)],
   );
 }
 
@@ -659,13 +659,13 @@ async function upsertSkillPackage(parsed, userId) {
         parsed.version.sourceCommitSha,
         parsed.version.contentHash,
         snapshotDir,
-        parsed.version.manifest,
-        parsed.version.frontmatter,
+        JSON.stringify(parsed.version.manifest),
+        JSON.stringify(parsed.version.frontmatter),
         parsed.version.permissions,
         parsed.version.risk,
         parsed.version.status,
-        parsed.version.scanReport,
-        parsed.version.fileManifest,
+        JSON.stringify(parsed.version.scanReport),
+        JSON.stringify(parsed.version.fileManifest),
         userId,
       ],
     );
