@@ -47,6 +47,90 @@ git pull
 docker compose up --build -d
 ```
 
+## 直接贴入 Docker / Portainer
+
+如果你是在 Portainer、1Panel、CasaOS、群晖 Container Manager 这类界面里直接粘贴 compose，不要使用 `npm ci`。请使用仓库里的独立 compose：
+
+[docker-compose.standalone.yml](docker-compose.standalone.yml)
+
+这个版本会在容器启动时自动从 GitHub 下载源码，并使用 `npm install --omit=dev` 安装依赖，所以不需要宿主机提前 clone 仓库。
+
+直接粘贴版：
+
+```yaml
+services:
+  skillhub-app:
+    image: node:22-alpine
+    working_dir: /app
+    command: >
+      sh -c "
+        set -eu;
+        apk add --no-cache curl tar;
+        rm -rf /tmp/skillhub;
+        mkdir -p /tmp/skillhub /app;
+        curl -L https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz
+          | tar -xz --strip-components=1 -C /tmp/skillhub;
+        cp -a /tmp/skillhub/. /app/;
+        npm install --omit=dev;
+        node server.js
+      "
+    ports:
+      - "4777:4777"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4777
+      NODE_ENV: production
+      DATA_DIR: /data
+      PACKAGE_DIR: /data/packages
+      DATABASE_URL: postgres://skillhub:skillhub@postgres:5432/skillhub
+      PUBLIC_BASE_URL: http://127.0.0.1:4777
+      SESSION_SECRET: change-me-long-random-string
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: admin123456
+      MAX_UPLOAD_MB: 25
+      PUBLISH_BRANCH: main
+      GITHUB_APP_ID: ""
+      GITHUB_INSTALLATION_ID: ""
+      GITHUB_APP_PRIVATE_KEY: ""
+      GITHUB_APP_PRIVATE_KEY_PATH: ""
+      PUBLISH_REPO: ""
+    volumes:
+      - skillhub_app:/app
+      - skillhub_packages:/data/packages
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: skillhub
+      POSTGRES_USER: skillhub
+      POSTGRES_PASSWORD: skillhub
+    volumes:
+      - skillhub_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillhub -d skillhub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  skillhub_app:
+  skillhub_postgres_data:
+  skillhub_packages:
+```
+
+如果是服务器部署，把这三项改掉：
+
+```yaml
+PUBLIC_BASE_URL: http://你的服务器IP或域名:4777
+SESSION_SECRET: 一串长随机字符串
+ADMIN_PASSWORD: 强密码
+```
+
 ## 功能
 
 - 内置账号登录：`admin` / `member` 两种角色。
