@@ -72,6 +72,38 @@ function slugify(input) {
   return slug || `skill-${crypto.randomBytes(3).toString("hex")}`;
 }
 
+function safeFilePart(input) {
+  const cleaned = String(input || "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "skill";
+}
+
+function encodePathSegment(value) {
+  return encodeURIComponent(String(value || ""));
+}
+
+function absoluteUrl(route) {
+  return `${String(PUBLIC_BASE_URL).replace(/\/+$/, "")}${route}`;
+}
+
+function publicSkillPath(slug, version, action) {
+  return `/api/public/skills/${encodePathSegment(slug)}/${encodePathSegment(version)}/${action}`;
+}
+
+function isGithubAppConfigured() {
+  const config = githubConfig();
+  return Boolean(config.appId && config.installationId && (config.privateKey || config.privateKeyPath));
+}
+
+function isGithubSyncConfigured() {
+  return Boolean(PUBLISH_REPO && isGithubAppConfigured());
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
 function assertString(value, field, min = 1, max = 300) {
   const text = String(value || "").trim();
   if (text.length < min || text.length > max) {
@@ -294,6 +326,9 @@ function toSkill(row) {
 }
 
 function toVersion(row) {
+  const downloadPath = `/api/skill-versions/${row.id}/download`;
+  const publicDownloadPath = row.slug ? publicSkillPath(row.slug, row.version, "download") : `/api/public/skill-versions/${row.id}/download`;
+  const installScriptPath = row.slug ? publicSkillPath(row.slug, row.version, "install.sh") : `/api/public/skill-versions/${row.id}/install.sh`;
   return {
     id: row.id,
     skillId: row.skill_id,
@@ -321,8 +356,15 @@ function toVersion(row) {
     publishCommitSha: row.publish_commit_sha,
     syncStatus: row.sync_status,
     syncError: row.sync_error,
-    installCommand: `skillhub install ${row.slug || ""}@${row.version}`,
-    downloadUrl: `${PUBLIC_BASE_URL}/api/skill-versions/${row.id}/download`,
+    installCommand: `curl -fsSL ${absoluteUrl(installScriptPath)} | sh`,
+    downloadUrl: downloadPath,
+    authenticatedDownloadUrl: downloadPath,
+    publicDownloadPath,
+    publicDownloadUrl: absoluteUrl(publicDownloadPath),
+    agentPullPath: publicDownloadPath,
+    agentPullUrl: absoluteUrl(publicDownloadPath),
+    installScriptPath,
+    installScriptUrl: absoluteUrl(installScriptPath),
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -617,6 +659,39 @@ async function createReleaseZip(sourceDir, targetZip, metadata) {
   await done;
 }
 
+function buildReleaseMetadata(version, actorId = null) {
+  return {
+    skill: {
+      id: version.skill_id,
+      slug: version.slug,
+      name: version.name,
+    },
+    version: {
+      id: version.id,
+      version: version.version,
+      contentHash: version.content_hash,
+      sourceType: version.source_type,
+      sourceRepo: version.source_repo,
+      sourcePath: version.source_path,
+      sourceRef: version.source_ref,
+      sourceCommitSha: version.source_commit_sha,
+    },
+    generatedAt: nowIso(),
+    publishedBy: actorId,
+  };
+}
+
+async function packageSkillVersion(version, actorId = null) {
+  const zipName = `${safeFilePart(version.slug)}-${safeFilePart(version.version)}.zip`;
+  const zipPath = version.package_zip_path || path.join(RELEASE_DIR, zipName);
+  if (version.package_zip_path && fssync.existsSync(version.package_zip_path)) {
+    return version.package_zip_path;
+  }
+  await createReleaseZip(version.snapshot_dir, zipPath, buildReleaseMetadata(version, actorId));
+  await pool.query("UPDATE skill_versions SET package_zip_path = $1 WHERE id = $2", [zipPath, version.id]);
+  return zipPath;
+}
+
 async function upsertSkillPackage(parsed, userId) {
   const skillId = uid("skl");
   const versionId = uid("ver");
@@ -761,19 +836,69 @@ function validateRepo(repo) {
 
 function normalizeRepoPath(inputPath) {
   const clean = String(inputPath || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
-  if (!clean || clean.includes("..")) throw new AppError("invalid_source_path", "Path is invalid", 422);
+  if (!clean || clean === ".") return ".";
+  if (clean.includes("..")) throw new AppError("invalid_source_path", "Path is invalid", 422);
   return clean.endsWith("/SKILL.md") || clean === "SKILL.md" ? path.posix.dirname(clean) : clean;
 }
 
+function parseGithubUrl(input) {
+  const value = String(input || "").trim();
+  if (!value) return null;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new AppError("invalid_github_url", "GitHub link is invalid", 422);
+  }
+  if (parsed.hostname !== "github.com") {
+    throw new AppError("invalid_github_url", "GitHub link must use github.com", 422);
+  }
+  const parts = parsed.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (parts.length < 2) {
+    throw new AppError("invalid_github_url", "GitHub link must include owner and repo", 422);
+  }
+  const repo = `${parts[0]}/${parts[1].replace(/\.git$/, "")}`;
+  const markerIndex = parts.findIndex((part) => part === "tree" || part === "blob");
+  if (markerIndex === -1) {
+    return { repo, path: ".", ref: null };
+  }
+  const marker = parts[markerIndex];
+  const rest = parts.slice(markerIndex + 1);
+  if (!rest.length) {
+    throw new AppError("invalid_github_url", "GitHub link must include a branch or tag", 422);
+  }
+  const ref = rest[0];
+  const sourcePath = rest.slice(1).join("/") || ".";
+  return {
+    repo,
+    path: marker === "blob" ? normalizeRepoPath(sourcePath) : sourcePath,
+    ref,
+  };
+}
+
+function normalizeGithubImportPayload(payload) {
+  const parsed = parseGithubUrl(payload.url || payload.githubUrl);
+  return {
+    repo: payload.repo || parsed?.repo,
+    path: payload.path || parsed?.path || ".",
+    ref: payload.ref || parsed?.ref || null,
+  };
+}
+
 async function importGithubPackage(payload) {
-  const repo = assertString(payload.repo, "repo");
+  const normalized = normalizeGithubImportPayload(payload);
+  const repo = assertString(normalized.repo, "repo");
   validateRepo(repo);
-  const sourcePath = normalizeRepoPath(payload.path);
-  const sourceRef = assertString(payload.ref || "main", "ref", 1, 120);
+  const sourcePath = normalizeRepoPath(normalized.path);
+  const [owner, name] = repo.split("/");
+  let sourceRef = normalized.ref ? assertString(normalized.ref, "ref", 1, 120) : "";
+  if (!sourceRef) {
+    const repoInfo = await githubRequest(`/repos/${owner}/${name}`);
+    sourceRef = assertString(repoInfo.default_branch || "main", "ref", 1, 120);
+  }
   if (!/^[A-Za-z0-9._/-]+$/.test(sourceRef) || sourceRef.includes("..")) {
     throw new AppError("invalid_ref", "Ref is invalid", 422);
   }
-  const [owner, name] = repo.split("/");
   const commit = await githubRequest(`/repos/${owner}/${name}/commits/${encodeURIComponent(sourceRef)}`);
   const tree = await githubRequest(`/repos/${owner}/${name}/git/trees/${commit.sha}?recursive=1`);
   const prefix = sourcePath === "." ? "" : `${sourcePath}/`;
@@ -821,27 +946,7 @@ async function githubSyncVersion(version, actorId) {
   if (!PUBLISH_REPO) throw new AppError("github_not_configured", "PUBLISH_REPO is not configured", 400);
   validateRepo(PUBLISH_REPO);
   const [owner, repo] = PUBLISH_REPO.split("/");
-  const metadata = {
-    skill: {
-      id: version.skill_id,
-      slug: version.slug,
-      name: version.name,
-    },
-    version: {
-      id: version.id,
-      version: version.version,
-      contentHash: version.content_hash,
-      sourceType: version.source_type,
-      sourceRepo: version.source_repo,
-      sourcePath: version.source_path,
-      sourceRef: version.source_ref,
-      sourceCommitSha: version.source_commit_sha,
-    },
-    publishedAt: nowIso(),
-    publishedBy: actorId,
-  };
-  const releaseZipPath = path.join(RELEASE_DIR, `${version.slug}-${version.version}.zip`);
-  await createReleaseZip(version.snapshot_dir, releaseZipPath, metadata);
+  const releaseZipPath = await packageSkillVersion(version, actorId);
   const entries = [];
   async function walk(directory, prefix = "") {
     const children = await fs.readdir(directory, { withFileTypes: true });
@@ -927,7 +1032,8 @@ async function listSkillsForUser(user) {
 app.get("/api/health", async (req, res) => {
   sendData(res, {
     ok: true,
-    githubConfigured: Boolean(githubConfig().appId && githubConfig().installationId && (githubConfig().privateKey || githubConfig().privateKeyPath)),
+    githubConfigured: isGithubAppConfigured(),
+    githubSyncConfigured: isGithubSyncConfigured(),
     publishRepo: PUBLISH_REPO || null,
     publishBranch: PUBLISH_BRANCH,
   });
@@ -1142,28 +1248,40 @@ async function publishVersion(req, res) {
   if (version.status !== "approved" && version.status !== "published") {
     throw new AppError("invalid_state", "Version must be approved before publishing", 409);
   }
-  if (version.status === "published" && version.publish_commit_sha) {
+  if (version.status === "published") {
     sendData(res, toVersion(version));
     return;
   }
-  await pool.query("UPDATE skill_versions SET sync_status = 'syncing', sync_error = NULL WHERE id = $1", [version.id]);
-  try {
-    const sync = await githubSyncVersion(version, req.user.id);
-    await pool.query(
-      `UPDATE skill_versions
-       SET status = 'published', sync_status = 'synced', sync_error = NULL, publisher_id = $1,
-           published_at = now(), publish_repo = $2, publish_branch = $3, publish_commit_sha = $4,
-           package_zip_path = $5
-       WHERE id = $6`,
-      [req.user.id, PUBLISH_REPO, PUBLISH_BRANCH, sync.commitSha, sync.releaseZipPath, version.id],
-    );
-    await pool.query("UPDATE skills SET current_version_id = $1, updated_at = now() WHERE id = $2", [version.id, version.skill_id]);
-    await audit(req.user.id, "version_published", "skill_version", version.id, { commitSha: sync.commitSha, repo: PUBLISH_REPO });
-    sendData(res, toVersion(await loadVersion(version.id)));
-  } catch (error) {
-    await pool.query("UPDATE skill_versions SET status = 'approved', sync_status = 'failed', sync_error = $1 WHERE id = $2", [error.message, version.id]);
-    throw error;
+  const releaseZipPath = await packageSkillVersion(version, req.user.id);
+  const initialSyncStatus = isGithubSyncConfigured() ? "not_synced" : "local_only";
+  await pool.query(
+    `UPDATE skill_versions
+     SET status = 'published', sync_status = $1, sync_error = NULL, publisher_id = $2,
+         published_at = now(), package_zip_path = $3
+     WHERE id = $4`,
+    [initialSyncStatus, req.user.id, releaseZipPath, version.id],
+  );
+  await pool.query("UPDATE skills SET current_version_id = $1, updated_at = now() WHERE id = $2", [version.id, version.skill_id]);
+  await audit(req.user.id, "version_published", "skill_version", version.id, { mode: initialSyncStatus });
+
+  if (isGithubSyncConfigured()) {
+    await pool.query("UPDATE skill_versions SET sync_status = 'syncing', sync_error = NULL WHERE id = $1", [version.id]);
+    try {
+      const sync = await githubSyncVersion(await loadVersion(version.id), req.user.id);
+      await pool.query(
+        `UPDATE skill_versions
+         SET sync_status = 'synced', sync_error = NULL, publish_repo = $1, publish_branch = $2,
+             publish_commit_sha = $3, package_zip_path = $4
+         WHERE id = $5`,
+        [PUBLISH_REPO, PUBLISH_BRANCH, sync.commitSha, sync.releaseZipPath, version.id],
+      );
+      await audit(req.user.id, "version_synced_github", "skill_version", version.id, { commitSha: sync.commitSha, repo: PUBLISH_REPO });
+    } catch (error) {
+      await pool.query("UPDATE skill_versions SET sync_status = 'failed', sync_error = $1 WHERE id = $2", [error.message, version.id]);
+      await audit(req.user.id, "version_sync_failed", "skill_version", version.id, { error: error.message, repo: PUBLISH_REPO });
+    }
   }
+  sendData(res, toVersion(await loadVersion(version.id)));
 }
 
 app.post("/api/skill-versions/:id/publish", requireAuth, requireAdmin, async (req, res, next) => {
@@ -1176,7 +1294,29 @@ app.post("/api/skill-versions/:id/publish", requireAuth, requireAdmin, async (re
 
 app.post("/api/skill-versions/:id/sync-github", requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    await publishVersion(req, res);
+    if (!isGithubSyncConfigured()) throw new AppError("github_not_configured", "GitHub App and PUBLISH_REPO must be configured", 400);
+    const version = await loadVersion(req.params.id);
+    if (version.status !== "approved" && version.status !== "published") {
+      throw new AppError("invalid_state", "Version must be approved before GitHub sync", 409);
+    }
+    await pool.query("UPDATE skill_versions SET sync_status = 'syncing', sync_error = NULL WHERE id = $1", [version.id]);
+    try {
+      const sync = await githubSyncVersion(version, req.user.id);
+      await pool.query(
+        `UPDATE skill_versions
+         SET status = 'published', sync_status = 'synced', sync_error = NULL, publisher_id = $1,
+             published_at = COALESCE(published_at, now()), publish_repo = $2, publish_branch = $3,
+             publish_commit_sha = $4, package_zip_path = $5
+         WHERE id = $6`,
+        [req.user.id, PUBLISH_REPO, PUBLISH_BRANCH, sync.commitSha, sync.releaseZipPath, version.id],
+      );
+      await pool.query("UPDATE skills SET current_version_id = $1, updated_at = now() WHERE id = $2", [version.id, version.skill_id]);
+      await audit(req.user.id, "version_synced_github", "skill_version", version.id, { commitSha: sync.commitSha, repo: PUBLISH_REPO });
+      sendData(res, toVersion(await loadVersion(version.id)));
+    } catch (error) {
+      await pool.query("UPDATE skill_versions SET sync_status = 'failed', sync_error = $1 WHERE id = $2", [error.message, version.id]);
+      throw error;
+    }
   } catch (error) {
     next(error);
   }
@@ -1192,24 +1332,111 @@ app.post("/api/skill-versions/:id/archive", requireAuth, requireAdmin, async (re
   }
 });
 
+function requestBaseUrl(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const protocol = forwardedProto || req.protocol || "http";
+  const host = forwardedHost || req.headers.host;
+  return host ? `${protocol}://${host}` : String(PUBLIC_BASE_URL).replace(/\/+$/, "");
+}
+
+async function loadPublishedVersionBySlug(slug, version) {
+  const result = await pool.query(
+    `SELECT sv.*, s.slug, s.name, s.description, s.owner_team
+     FROM skill_versions sv
+     JOIN skills s ON s.id = sv.skill_id
+     WHERE s.slug = $1 AND sv.version = $2 AND sv.status = 'published'`,
+    [slug, version],
+  );
+  if (result.rowCount === 0) throw new AppError("not_found", "Published skill version not found", 404);
+  return result.rows[0];
+}
+
+async function sendVersionZip(res, version) {
+  const zipPath = await packageSkillVersion(version);
+  res.download(zipPath, `${safeFilePart(version.slug)}-${safeFilePart(version.version)}.zip`);
+}
+
+function renderInstallScript(req, version) {
+  const downloadUrl = `${requestBaseUrl(req)}${publicSkillPath(version.slug, version.version, "download")}`;
+  return `#!/bin/sh
+set -eu
+
+SKILL_SLUG=${shellQuote(version.slug)}
+SKILL_VERSION=${shellQuote(version.version)}
+SKILL_DIR="\${SKILL_DIR:-$HOME/.agents/skills}"
+TARGET_DIR="$SKILL_DIR/$SKILL_SLUG"
+TMP_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+mkdir -p "$TARGET_DIR"
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL ${shellQuote(downloadUrl)} -o "$TMP_DIR/skill.zip"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$TMP_DIR/skill.zip" ${shellQuote(downloadUrl)}
+else
+  echo "curl or wget is required" >&2
+  exit 1
+fi
+
+if ! command -v unzip >/dev/null 2>&1; then
+  echo "unzip is required" >&2
+  exit 1
+fi
+
+unzip -oq "$TMP_DIR/skill.zip" -d "$TARGET_DIR"
+echo "Installed $SKILL_SLUG@$SKILL_VERSION to $TARGET_DIR"
+`;
+}
+
+app.get("/api/public/skill-versions/:id/download", async (req, res, next) => {
+  try {
+    const version = await loadVersion(req.params.id);
+    if (version.status !== "published") throw new AppError("not_found", "Published skill version not found", 404);
+    await sendVersionZip(res, version);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/public/skill-versions/:id/install.sh", async (req, res, next) => {
+  try {
+    const version = await loadVersion(req.params.id);
+    if (version.status !== "published") throw new AppError("not_found", "Published skill version not found", 404);
+    res.type("text/x-shellscript").send(renderInstallScript(req, version));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/public/skills/:slug/:version/download", async (req, res, next) => {
+  try {
+    const version = await loadPublishedVersionBySlug(req.params.slug, req.params.version);
+    await sendVersionZip(res, version);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/public/skills/:slug/:version/install.sh", async (req, res, next) => {
+  try {
+    const version = await loadPublishedVersionBySlug(req.params.slug, req.params.version);
+    res.type("text/x-shellscript").send(renderInstallScript(req, version));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/skill-versions/:id/download", requireAuth, async (req, res, next) => {
   try {
     const version = await loadVersion(req.params.id);
     if (version.status !== "published" && req.user.role !== "admin" && version.created_by !== req.user.id) {
       throw new AppError("forbidden", "Not allowed", 403);
     }
-    let zipPath = version.package_zip_path;
-    if (!zipPath) {
-      const metadata = {
-        skill: { id: version.skill_id, slug: version.slug, name: version.name },
-        version: { id: version.id, version: version.version, contentHash: version.content_hash },
-        generatedAt: nowIso(),
-      };
-      zipPath = path.join(RELEASE_DIR, `${version.slug}-${version.version}.zip`);
-      await createReleaseZip(version.snapshot_dir, zipPath, metadata);
-      await pool.query("UPDATE skill_versions SET package_zip_path = $1 WHERE id = $2", [zipPath, version.id]);
-    }
-    res.download(zipPath, `${version.slug}-${version.version}.zip`);
+    await sendVersionZip(res, version);
   } catch (error) {
     next(error);
   }

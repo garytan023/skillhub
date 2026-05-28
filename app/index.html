@@ -102,16 +102,14 @@
 
             <section class="panel">
               <div class="panel-head">
-                <h2>从 GitHub repo 导入</h2>
+                <h2>从 GitHub 链接导入</h2>
               </div>
               <form class="form-grid github-form" id="githubImportForm">
-                <label>Repo<input name="repo" required placeholder="owner/repo" /></label>
-                <label>路径<input name="path" required placeholder="skills/demo-report" /></label>
-                <label>Ref<input name="ref" required value="main" /></label>
+                <label>GitHub 链接<input name="url" required placeholder="https://github.com/owner/repo/tree/main/skills/demo-report" /></label>
                 <label>版本号<input name="version" placeholder="默认使用 ref" /></label>
                 <button class="primary-button" type="submit">导入并扫描</button>
               </form>
-              <p class="help-text">GitHub 导入使用 GitHub App 权限读取仓库。未配置 GitHub App 时，此能力会显示未配置。</p>
+              <p class="help-text">可直接粘贴 repo、tree 文件夹或 blob/SKILL.md 链接。GitHub 导入使用 GitHub App 权限读取仓库，不执行脚本。</p>
             </section>
           </div>
 
@@ -141,7 +139,7 @@
           <section class="panel">
             <div class="panel-head">
               <h2>管理员审核队列</h2>
-              <span class="muted">批准后可发布并同步到企业 GitHub Skill repo</span>
+              <span class="muted">批准后可发布上线；配置 GitHub App 后可同步到企业 Skill repo</span>
             </div>
             <div class="review-list" id="reviewList"></div>
           </section>

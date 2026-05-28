@@ -1,7 +1,7 @@
 const viewMeta = {
   catalog: ["Skill 目录", "浏览已提交和已发布的企业 Skill。"],
-  submit: ["上传 / 导入", "团队成员上传 zip 或从 GitHub repo 导入 Skill。"],
-  review: ["审核发布", "管理员批准、驳回、发布并同步到 GitHub。"],
+  submit: ["上传 / 导入", "团队成员上传 zip 或粘贴 GitHub 链接导入 Skill。"],
+  review: ["审核发布", "管理员批准、驳回、发布上线并按需同步 GitHub。"],
   users: ["用户管理", "创建团队成员和管理员账号。"],
 };
 
@@ -9,7 +9,7 @@ let session = null;
 let skills = [];
 let versionsBySkill = new Map();
 let users = [];
-let health = { githubConfigured: false, publishRepo: null, publishBranch: "main" };
+let health = { githubConfigured: false, githubSyncConfigured: false, publishRepo: null, publishBranch: "main" };
 let selectedVersion = null;
 
 function escapeHtml(value) {
@@ -59,6 +59,24 @@ function badge(value) {
   return `<span class="badge ${escapeHtml(value)}">${escapeHtml(value || "-")}</span>`;
 }
 
+function absoluteClientUrl(value) {
+  if (!value) return "";
+  return new URL(value, window.location.origin).href;
+}
+
+function publicDownloadHref(version) {
+  return absoluteClientUrl(version?.publicDownloadPath || version?.publicDownloadUrl || version?.downloadUrl);
+}
+
+function authenticatedDownloadHref(version) {
+  return absoluteClientUrl(version?.downloadUrl || version?.authenticatedDownloadUrl);
+}
+
+function installCommand(version) {
+  const script = absoluteClientUrl(version?.installScriptPath || version?.installScriptUrl);
+  return script ? `curl -fsSL ${script} | sh` : version?.installCommand || "";
+}
+
 function versionForSkill(skill) {
   const versions = versionsBySkill.get(skill.id) || [];
   if (!versions.length) return null;
@@ -93,9 +111,13 @@ function renderShell() {
     node.classList.toggle("hidden", !canAdmin());
   });
   const githubStatus = document.getElementById("githubStatus");
-  githubStatus.textContent = health.githubConfigured ? `GitHub: ${health.publishRepo || "configured"}` : "GitHub 未配置";
-  githubStatus.classList.toggle("online", health.githubConfigured);
-  githubStatus.classList.toggle("offline", !health.githubConfigured);
+  githubStatus.textContent = health.githubSyncConfigured
+    ? `GitHub: ${health.publishRepo}`
+    : health.githubConfigured
+      ? "GitHub 已配置，未设发布仓库"
+      : "GitHub 未配置";
+  githubStatus.classList.toggle("online", Boolean(health.githubSyncConfigured));
+  githubStatus.classList.toggle("offline", !health.githubSyncConfigured);
 }
 
 function renderMetrics() {
@@ -140,7 +162,7 @@ function renderSkillRows() {
         <td>
           <div class="actions">
             <button class="mini-button" data-action="detail" data-skill-id="${skill.id}" data-version-id="${version?.id || ""}" type="button">详情</button>
-            ${version?.status === "published" ? `<a class="mini-link" href="${version.downloadUrl}">下载</a>` : ""}
+            ${version?.status === "published" ? `<a class="mini-link" href="${escapeHtml(publicDownloadHref(version))}">下载</a>` : ""}
           </div>
         </td>
       </tr>
@@ -188,7 +210,8 @@ function renderReviewList() {
           <button class="mini-button" data-action="detail" data-skill-id="${version.skillId}" data-version-id="${version.id}" type="button">详情</button>
           ${version.status === "review" ? `<button class="mini-button" data-action="approve" data-version-id="${version.id}" type="button">批准</button>` : ""}
           ${version.status === "review" ? `<button class="mini-button" data-action="reject" data-version-id="${version.id}" type="button">驳回</button>` : ""}
-          ${version.status === "approved" || version.syncStatus === "failed" ? `<button class="mini-button" data-action="publish" data-version-id="${version.id}" type="button">发布同步</button>` : ""}
+          ${version.status === "approved" ? `<button class="mini-button" data-action="publish" data-version-id="${version.id}" type="button">发布上线</button>` : ""}
+          ${version.status === "published" && health.githubSyncConfigured && version.syncStatus !== "synced" ? `<button class="mini-button" data-action="sync-github" data-version-id="${version.id}" type="button">同步 GitHub</button>` : ""}
           ${version.status === "published" ? `<button class="mini-button" data-action="archive" data-version-id="${version.id}" type="button">下架</button>` : ""}
         </div>
       </article>
@@ -218,7 +241,9 @@ function renderVersionDetail() {
   }
   target.className = "detail-grid";
   const skill = skills.find((item) => item.id === selectedVersion.skillId);
-  const install = `skillhub install ${skill?.slug || ""}@${selectedVersion.version}`;
+  const isPublished = selectedVersion.status === "published";
+  const install = isPublished ? installCommand(selectedVersion) : "发布上线后显示在线拉取命令";
+  const zipHref = isPublished ? publicDownloadHref(selectedVersion) : authenticatedDownloadHref(selectedVersion);
   target.innerHTML = `
     <div>
       <h3>${escapeHtml(skill?.name || selectedVersion.skillId)} @ ${escapeHtml(selectedVersion.version)}</h3>
@@ -226,9 +251,9 @@ function renderVersionDetail() {
       <div class="detail-badges">${badge(selectedVersion.status)} ${badge(selectedVersion.risk)} ${badge(selectedVersion.sourceType)}</div>
     </div>
     <div class="detail-section">
-      <strong>安装命令</strong>
+      <strong>Agent 在线拉取</strong>
       <code>${escapeHtml(install)}</code>
-      <a class="mini-link" href="${selectedVersion.downloadUrl}">下载 zip</a>
+      <a class="mini-link" href="${escapeHtml(zipHref)}">${isPublished ? "直接下载 zip" : "管理员下载 zip"}</a>
     </div>
     <div class="detail-section">
       <strong>来源</strong>
@@ -357,7 +382,6 @@ async function handleGithubImport(event) {
       body: JSON.stringify(data),
     });
     form.reset();
-    form.elements.ref.value = "main";
     await refreshAll();
     toast("GitHub 导入完成，已生成草稿");
   } catch (error) {
@@ -423,7 +447,12 @@ async function handleAction(event) {
     }
     if (action === "publish") {
       await postAction(`/api/skill-versions/${versionId}/publish`);
-      toast("已发布并同步 GitHub");
+      toast("已发布上线");
+      return;
+    }
+    if (action === "sync-github") {
+      await postAction(`/api/skill-versions/${versionId}/sync-github`);
+      toast("已同步 GitHub");
       return;
     }
     if (action === "archive") {

@@ -419,7 +419,7 @@ h2 {
 }
 
 .github-form {
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: minmax(260px, 2fr) minmax(140px, 1fr) auto;
 }
 
 .compact-form label:nth-child(2) {
@@ -544,6 +544,7 @@ tr:last-child td {
 .badge.upload,
 .badge.github,
 .badge.review,
+.badge.local_only,
 .badge.syncing,
 .badge.not_synced {
   color: var(--blue);
