@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/skill-manifest.schema.json",
+  "title": "Enterprise Skill Manifest",
+  "type": "object",
+  "required": ["schema_version", "name", "description", "entrypoint", "permissions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,80}$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 500
+    },
+    "entrypoint": {
+      "type": "string",
+      "enum": ["SKILL.md"]
+    },
+    "runtime_targets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["codex", "claude-code", "github-copilot", "openclaw", "open-webui", "dify"]
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["shell", "network", "filesystem", "browser", "database", "messaging", "secrets"]
+          },
+          "scope": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500
+          }
+        }
+      },
+      "default": []
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "required"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,100}$"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      },
+      "default": []
+    },
+    "license": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "owners": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "default": []
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,40}$"
+      },
+      "uniqueItems": true,
+      "default": []
+    }
+  }
+}
+

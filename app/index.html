@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Skill Hub</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="login-screen" id="loginScreen">
+      <section class="login-panel">
+        <div class="brand large">
+          <div class="brand-mark">S</div>
+          <div>
+            <strong>Skill Hub</strong>
+            <span>企业 Skill 上传、审核、发布中心</span>
+          </div>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>邮箱<input name="email" type="email" required value="admin@example.com" /></label>
+          <label>密码<input name="password" type="password" required value="admin123456" /></label>
+          <button class="primary-button" type="submit">登录</button>
+        </form>
+      </section>
+    </div>
+
+    <div class="shell hidden" id="appShell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <div class="brand-mark">S</div>
+          <div>
+            <strong>Skill Hub</strong>
+            <span id="sessionLabel">Local</span>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-item active" data-view="catalog" type="button">Skill 目录</button>
+          <button class="nav-item" data-view="submit" type="button">上传 / 导入</button>
+          <button class="nav-item admin-only" data-view="review" type="button">审核发布</button>
+          <button class="nav-item admin-only" data-view="users" type="button">用户管理</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 id="viewTitle">Skill 目录</h1>
+            <p id="viewSubtitle">浏览已提交和已发布的企业 Skill。</p>
+          </div>
+          <div class="top-actions">
+            <span class="status-pill offline" id="githubStatus">GitHub 未配置</span>
+            <button class="ghost-button" id="refreshData" type="button">刷新</button>
+            <button class="ghost-button" id="logoutButton" type="button">退出</button>
+          </div>
+        </header>
+
+        <section class="view active" id="view-catalog">
+          <div class="metrics-grid" id="metrics"></div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Skill 列表</h2>
+              <input class="search-input" id="skillSearch" placeholder="搜索名称、slug、团队" />
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Skill</th>
+                    <th>版本</th>
+                    <th>状态</th>
+                    <th>风险</th>
+                    <th>来源</th>
+                    <th>发布</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="skillRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel" id="detailPanel">
+            <div class="panel-head">
+              <h2>版本详情</h2>
+            </div>
+            <div id="versionDetail" class="detail-empty">选择一条 Skill 查看详情。</div>
+          </section>
+        </section>
+
+        <section class="view" id="view-submit">
+          <div class="content-grid two-col">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>上传 zip 包</h2>
+              </div>
+              <form class="form-grid upload-form" id="uploadForm">
+                <label>版本号<input name="version" required placeholder="v0.1.0" /></label>
+                <label>Skill zip 包<input name="package" type="file" accept=".zip,application/zip" required /></label>
+                <button class="primary-button" type="submit">上传并扫描</button>
+              </form>
+              <p class="help-text">zip 中必须且只能包含一个 `SKILL.md`。支持 scripts、assets、references、`skill.manifest.json` 等 supporting files。</p>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>从 GitHub repo 导入</h2>
+              </div>
+              <form class="form-grid github-form" id="githubImportForm">
+                <label>Repo<input name="repo" required placeholder="owner/repo" /></label>
+                <label>路径<input name="path" required placeholder="skills/demo-report" /></label>
+                <label>Ref<input name="ref" required value="main" /></label>
+                <label>版本号<input name="version" placeholder="默认使用 ref" /></label>
+                <button class="primary-button" type="submit">导入并扫描</button>
+              </form>
+              <p class="help-text">GitHub 导入使用 GitHub App 权限读取仓库。未配置 GitHub App 时，此能力会显示未配置。</p>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>我的提交</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Skill</th>
+                    <th>版本</th>
+                    <th>状态</th>
+                    <th>风险</th>
+                    <th>来源</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="mySubmissionRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-review">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>管理员审核队列</h2>
+              <span class="muted">批准后可发布并同步到企业 GitHub Skill repo</span>
+            </div>
+            <div class="review-list" id="reviewList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-users">
+          <div class="content-grid two-col">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>创建用户</h2>
+              </div>
+              <form class="form-grid user-form" id="userForm">
+                <label>姓名<input name="name" required /></label>
+                <label>邮箱<input name="email" type="email" required /></label>
+                <label>团队<input name="team" required value="default" /></label>
+                <label>角色
+                  <select name="role">
+                    <option value="member">member</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+                <label>密码<input name="password" type="password" required minlength="8" /></label>
+                <button class="primary-button" type="submit">创建</button>
+              </form>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>用户列表</h2>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>用户</th>
+                      <th>团队</th>
+                      <th>角色</th>
+                      <th>创建时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="userRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

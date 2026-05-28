@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "name": "demo-report",
+  "description": "Generate a short internal report from approved local notes.",
+  "entrypoint": "SKILL.md",
+  "runtime_targets": ["codex", "claude-code", "openclaw"],
+  "permissions": [
+    {
+      "type": "filesystem",
+      "scope": "approved note directories",
+      "reason": "Read local source notes for report generation"
+    },
+    {
+      "type": "network",
+      "scope": "internal metadata API",
+      "reason": "Enrich project metadata when configured"
+    }
+  ],
+  "license": "internal",
+  "owners": ["platform-ai"],
+  "tags": ["office", "reporting"]
+}
+

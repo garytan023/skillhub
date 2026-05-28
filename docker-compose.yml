@@ -1,0 +1,40 @@
+services:
+  skillhub-app:
+    build:
+      context: .
+    ports:
+      - "4777:4777"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4777
+      DATA_DIR: /data
+      PACKAGE_DIR: /data/packages
+      DATABASE_URL: postgres://skillhub:skillhub@postgres:5432/skillhub
+    volumes:
+      - skillhub_packages:/data/packages
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: skillhub
+      POSTGRES_USER: skillhub
+      POSTGRES_PASSWORD: skillhub
+    volumes:
+      - skillhub_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillhub -d skillhub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  skillhub_postgres_data:
+  skillhub_packages:
