@@ -21,6 +21,7 @@ const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 25);
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 const MAX_FILE_COUNT = Number(process.env.MAX_FILE_COUNT || 300);
 const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES || 2 * 1024 * 1024);
+const MAX_GITHUB_ARCHIVE_BYTES = Number(process.env.MAX_GITHUB_ARCHIVE_MB || 80) * 1024 * 1024;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://${HOST}:${PORT}`;
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-only-change-me";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -518,7 +519,9 @@ function isSymlinkEntry(entry) {
   return mode === 0o120000;
 }
 
-async function readZipEntries(zipPath) {
+async function readZipEntries(zipPath, options = {}) {
+  const maxFileCount = options.maxFileCount || MAX_FILE_COUNT;
+  const maxFileBytes = options.maxFileBytes || MAX_FILE_BYTES;
   return new Promise((resolve, reject) => {
     const entries = [];
     yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (openError, zipfile) => {
@@ -528,8 +531,8 @@ async function readZipEntries(zipPath) {
       }
       zipfile.readEntry();
       zipfile.on("entry", (entry) => {
-        if (entries.length >= MAX_FILE_COUNT) {
-          reject(new AppError("too_many_files", `Zip exceeds ${MAX_FILE_COUNT} files`, 422));
+        if (entries.length >= maxFileCount) {
+          reject(new AppError("too_many_files", `Zip exceeds ${maxFileCount} files`, 422));
           zipfile.close();
           return;
         }
@@ -543,8 +546,8 @@ async function readZipEntries(zipPath) {
           return;
         }
         const safePath = validateRelativePath(entry.fileName);
-        if (entry.uncompressedSize > MAX_FILE_BYTES) {
-          reject(new AppError("file_too_large", `File exceeds ${MAX_FILE_BYTES} bytes`, 422, [{ path: safePath }]));
+        if (entry.uncompressedSize > maxFileBytes) {
+          reject(new AppError("file_too_large", `File exceeds ${maxFileBytes} bytes`, 422, [{ path: safePath }]));
           zipfile.close();
           return;
         }
@@ -943,6 +946,91 @@ function normalizeGithubImportPayload(payload) {
   };
 }
 
+function stripGithubArchiveRoot(entries) {
+  const firstSegments = entries.map((entry) => entry.path.split("/")[0]).filter(Boolean);
+  const root = firstSegments[0];
+  if (!root || !firstSegments.every((segment) => segment === root)) return entries;
+  return entries
+    .map((entry) => ({
+      path: entry.path.split("/").slice(1).join("/"),
+      content: entry.content,
+    }))
+    .filter((entry) => entry.path);
+}
+
+function selectGithubSkillEntries(entries, sourcePath) {
+  let skillRoot = sourcePath;
+  if (sourcePath === ".") {
+    const matches = entries.filter((entry) => entry.path === "SKILL.md" || entry.path.endsWith("/SKILL.md"));
+    if (matches.length > 1) {
+      throw new AppError("multiple_github_skills", "Repo contains multiple SKILL.md files. Paste a tree/blob link for one skill folder.", 422);
+    }
+    skillRoot = matches[0] ? path.posix.dirname(matches[0].path) : ".";
+  }
+  const prefix = skillRoot === "." ? "" : `${skillRoot}/`;
+  const selected = entries.filter((entry) => entry.path.startsWith(prefix));
+  if (!selected.some((entry) => entry.path === `${prefix}SKILL.md` || entry.path === "SKILL.md")) {
+    throw new AppError("skill_not_found", "GitHub path must contain SKILL.md", 404);
+  }
+  if (selected.length > MAX_FILE_COUNT) throw new AppError("too_many_files", `GitHub skill exceeds ${MAX_FILE_COUNT} files`, 422);
+  return { entries: selected, skillRoot, prefix };
+}
+
+async function downloadGithubArchive(owner, name, ref) {
+  const url = `https://codeload.github.com/${owner}/${name}/zip/${encodeURIComponent(ref)}`;
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": "skillhub",
+    },
+  });
+  if (!response.ok) {
+    const message = response.status === 404
+      ? "GitHub repo/ref not found or private. Public repo can import directly; private repo requires GitHub App config."
+      : `GitHub archive download failed with ${response.status}`;
+    throw new AppError("github_archive_error", message, response.status === 404 ? 404 : 502);
+  }
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > MAX_GITHUB_ARCHIVE_BYTES) {
+    throw new AppError("github_archive_too_large", `GitHub archive exceeds ${MAX_GITHUB_ARCHIVE_BYTES} bytes`, 422);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > MAX_GITHUB_ARCHIVE_BYTES) {
+    throw new AppError("github_archive_too_large", `GitHub archive exceeds ${MAX_GITHUB_ARCHIVE_BYTES} bytes`, 422);
+  }
+  const archivePath = path.join(UPLOAD_DIR, `${uid("github")}.zip`);
+  await fs.writeFile(archivePath, buffer);
+  return archivePath;
+}
+
+async function importPublicGithubArchive({ owner, name, repo, sourcePath, sourceRef, payload }) {
+  const refsToTry = sourceRef ? [sourceRef] : ["main", "master"];
+  let lastError = null;
+  for (const ref of refsToTry) {
+    let archivePath = null;
+    try {
+      archivePath = await downloadGithubArchive(owner, name, ref);
+      const archiveEntries = stripGithubArchiveRoot(await readZipEntries(archivePath, { maxFileCount: MAX_FILE_COUNT * 20 }));
+      const selected = selectGithubSkillEntries(archiveEntries, sourcePath);
+      return parseSkillPackage(selected.entries, {
+        sourceType: "github",
+        sourceRepo: repo,
+        sourcePath: selected.skillRoot,
+        sourceRef: ref,
+        sourceCommitSha: null,
+        version: payload.version || ref,
+        ownerTeam: payload.ownerTeam || "default",
+        tags: payload.tags,
+      });
+    } catch (error) {
+      lastError = error;
+      if (sourceRef || !["github_archive_error", "skill_not_found"].includes(error.code)) throw error;
+    } finally {
+      if (archivePath) await fs.rm(archivePath, { force: true });
+    }
+  }
+  throw lastError || new AppError("github_archive_error", "GitHub archive import failed", 502);
+}
+
 async function importGithubPackage(payload) {
   const normalized = normalizeGithubImportPayload(payload);
   const repo = assertString(normalized.repo, "repo");
@@ -950,6 +1038,12 @@ async function importGithubPackage(payload) {
   const sourcePath = normalizeRepoPath(normalized.path);
   const [owner, name] = repo.split("/");
   let sourceRef = normalized.ref ? assertString(normalized.ref, "ref", 1, 120) : "";
+  if (!isGithubAppConfigured()) {
+    if (sourceRef && (!/^[A-Za-z0-9._/-]+$/.test(sourceRef) || sourceRef.includes(".."))) {
+      throw new AppError("invalid_ref", "Ref is invalid", 422);
+    }
+    return importPublicGithubArchive({ owner, name, repo, sourcePath, sourceRef, payload });
+  }
   if (!sourceRef) {
     const repoInfo = await githubRequest(`/repos/${owner}/${name}`);
     sourceRef = assertString(repoInfo.default_branch || "main", "ref", 1, 120);
@@ -959,19 +1053,9 @@ async function importGithubPackage(payload) {
   }
   const commit = await githubRequest(`/repos/${owner}/${name}/commits/${encodeURIComponent(sourceRef)}`);
   const tree = await githubRequest(`/repos/${owner}/${name}/git/trees/${commit.sha}?recursive=1`);
-  let skillRoot = sourcePath;
-  if (sourcePath === ".") {
-    const matches = tree.tree.filter((item) => item.type === "blob" && (item.path === "SKILL.md" || item.path.endsWith("/SKILL.md")));
-    if (matches.length > 1) {
-      throw new AppError("multiple_github_skills", "Repo contains multiple SKILL.md files. Paste a tree/blob link for one skill folder.", 422);
-    }
-    skillRoot = matches[0] ? path.posix.dirname(matches[0].path) : ".";
-  }
-  const prefix = skillRoot === "." ? "" : `${skillRoot}/`;
-  const files = tree.tree.filter((item) => item.type === "blob" && item.path.startsWith(prefix));
-  if (!files.some((file) => file.path === `${prefix}SKILL.md` || file.path === "SKILL.md")) {
-    throw new AppError("skill_not_found", "GitHub path must contain SKILL.md", 404);
-  }
+  const treeEntries = tree.tree.filter((item) => item.type === "blob").map((item) => ({ path: item.path, sha: item.sha }));
+  const selected = selectGithubSkillEntries(treeEntries, sourcePath);
+  const files = tree.tree.filter((item) => item.type === "blob" && item.path.startsWith(selected.prefix));
   if (files.length > MAX_FILE_COUNT) throw new AppError("too_many_files", `GitHub skill exceeds ${MAX_FILE_COUNT} files`, 422);
   const entries = [];
   for (const file of files) {
@@ -979,14 +1063,14 @@ async function importGithubPackage(payload) {
     const content = Buffer.from(blob.content || "", blob.encoding || "base64");
     if (content.length > MAX_FILE_BYTES) throw new AppError("file_too_large", `File exceeds ${MAX_FILE_BYTES} bytes`, 422, [{ path: file.path }]);
     entries.push({
-      path: validateRelativePath(file.path.slice(prefix.length)),
+      path: validateRelativePath(file.path.slice(selected.prefix.length)),
       content,
     });
   }
   return parseSkillPackage(entries, {
     sourceType: "github",
     sourceRepo: repo,
-    sourcePath: skillRoot,
+    sourcePath: selected.skillRoot,
     sourceRef,
     sourceCommitSha: commit.sha,
     version: payload.version || sourceRef,
