@@ -698,6 +698,34 @@ async function handleAction(event) {
       if (!reason) return;
       await postAction(`/api/users/${userId}/reject`, { reason });
       toast("用户已驳回");
+      return;
+    }
+    if (action === "backup-local" || action === "backup-github") {
+      const route = action === "backup-local" ? "/api/admin/backup/local" : "/api/admin/backup/github";
+      const label = action === "backup-local" ? "本地备份" : "GitHub 同步";
+      trigger.disabled = true;
+      trigger.textContent = `${label}中…`;
+      const resultEl = document.getElementById("backupResult");
+      resultEl.className = "backup-result";
+      resultEl.textContent = "正在处理，请稍候…";
+      try {
+        const result = await api(route, { method: "POST" });
+        const lines = action === "backup-local"
+          ? [`✅ 备份完成：共 ${result.total} 个版本，成功 ${result.backed_up} 个，失败 ${result.failed} 个`, `📁 备份目录：${result.dir}`]
+          : [`✅ 同步完成：共 ${result.total} 个版本，成功 ${result.synced} 个，失败 ${result.failed} 个`, `🔗 仓库：${result.repo}@${result.branch}`];
+        if (result.errors?.length) {
+          lines.push(`⚠️ 失败详情：${result.errors.map((e) => `${e.slug}@${e.version} — ${e.error}`).join("；")}`);
+        }
+        resultEl.innerHTML = lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("");
+        toast(`${label}完成`);
+      } catch (error) {
+        resultEl.textContent = `操作失败: ${error.message}`;
+        toast(`${label}失败: ${error.message}`);
+      } finally {
+        trigger.disabled = false;
+        trigger.textContent = action === "backup-local" ? "开始本地备份" : "批量同步 GitHub";
+      }
+      return;
     }
   } catch (error) {
     toast(`操作失败: ${error.message}`);

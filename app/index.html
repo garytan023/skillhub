@@ -195,6 +195,25 @@
         </section>
 
         <section class="view" id="view-users">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>备份管理</h2>
+              <span class="muted">将已发布的 Skill 备份到本地服务器或批量同步到 GitHub</span>
+            </div>
+            <div class="backup-actions">
+              <div class="backup-card">
+                <strong>本地备份</strong>
+                <p class="muted">将所有已发布 Skill 的 ZIP 包复制到服务器备份目录，并生成 index.json 索引文件。</p>
+                <button class="primary-button" data-action="backup-local" type="button">开始本地备份</button>
+              </div>
+              <div class="backup-card">
+                <strong>批量同步 GitHub</strong>
+                <p class="muted">将所有未同步的已发布 Skill 推送到 PUBLISH_REPO。需已配置 GitHub App。</p>
+                <button class="ghost-button" data-action="backup-github" type="button">批量同步 GitHub</button>
+              </div>
+            </div>
+            <div id="backupResult" class="backup-result hidden"></div>
+          </section>
           <div class="content-grid two-col">
             <section class="panel">
               <div class="panel-head">
@@ -240,6 +259,7 @@
                 </table>
               </div>
             </section>
+          </div>
           </div>
         </section>
       </main>

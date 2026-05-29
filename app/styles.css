@@ -1226,3 +1226,41 @@ tr:last-child td {
     display: grid;
   }
 }
+
+.backup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.backup-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.backup-card strong {
+  font-size: 0.95rem;
+}
+
+.backup-card .muted {
+  font-size: 0.8rem;
+  flex: 1;
+}
+
+.backup-result {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.backup-result p {
+  margin: 0;
+}

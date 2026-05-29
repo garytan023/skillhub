@@ -7,14 +7,23 @@ services:
       - -c
       - |
         set -eu
-        apk add --no-cache curl tar
-        rm -rf /tmp/skillhub-src /tmp/skillhub.tar.gz
-        mkdir -p /tmp/skillhub-src /app
-        curl -fsSL -o /tmp/skillhub.tar.gz https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz
-        tar -xzf /tmp/skillhub.tar.gz -C /tmp/skillhub-src
-        cp -a /tmp/skillhub-src/*/. /app/
-        npm install --omit=dev
-        node server.js
+        if [ ! -f /app/server.js ]; then
+          apk add --no-cache curl tar
+          rm -rf /tmp/skillhub-src /tmp/skillhub.tar.gz
+          mkdir -p /tmp/skillhub-src /app
+          TARBALL_URL="https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz"
+          TARBALL_PROXY="https://ghproxy.com/https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz"
+          echo "Downloading skillhub source..."
+          curl -sSL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 120 \
+            -o /tmp/skillhub.tar.gz "$TARBALL_URL" \
+            || curl -sSL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 120 \
+            -o /tmp/skillhub.tar.gz "$TARBALL_PROXY"
+          tar -xzf /tmp/skillhub.tar.gz -C /tmp/skillhub-src
+          cp -a /tmp/skillhub-src/*/. /app/
+          npm install --omit=dev
+          rm -rf /tmp/skillhub-src /tmp/skillhub.tar.gz
+        fi
+        exec node server.js
     ports:
       - "4777:4777"
     environment:
