@@ -15,6 +15,7 @@ const PACKAGE_DIR = process.env.PACKAGE_DIR || path.join(DATA_DIR, "packages");
 const UPLOAD_DIR = path.join(PACKAGE_DIR, "uploads");
 const SNAPSHOT_DIR = path.join(PACKAGE_DIR, "snapshots");
 const RELEASE_DIR = path.join(PACKAGE_DIR, "releases");
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(PACKAGE_DIR, "backups");
 const PORT = Number(process.env.PORT || 4777);
 const HOST = process.env.HOST || "127.0.0.1";
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 25);
@@ -267,6 +268,7 @@ async function ensureDirs() {
   await fs.mkdir(UPLOAD_DIR, { recursive: true });
   await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
   await fs.mkdir(RELEASE_DIR, { recursive: true });
+  await fs.mkdir(BACKUP_DIR, { recursive: true });
 }
 
 async function migrate() {
@@ -1795,6 +1797,95 @@ app.get("/api/skill-versions/:id/download", requireAuth, async (req, res, next) 
       throw new AppError("forbidden", "Not allowed", 403);
     }
     await sendVersionZip(res, version);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/admin/backup/local", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT sv.*, s.slug, s.name, s.description, s.owner_team, s.tags
+       FROM skill_versions sv
+       JOIN skills s ON s.id = sv.skill_id
+       WHERE sv.status = 'published'
+       ORDER BY s.slug, sv.version`,
+    );
+    const versions = result.rows;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const snapshotDir = path.join(BACKUP_DIR, timestamp);
+    await fs.mkdir(snapshotDir, { recursive: true });
+    const backed = [];
+    const errors = [];
+    for (const version of versions) {
+      try {
+        const zipPath = await packageSkillVersion(version, req.user.id);
+        const destName = `${safeFilePart(version.slug)}-${safeFilePart(version.version)}.zip`;
+        await fs.copyFile(zipPath, path.join(snapshotDir, destName));
+        backed.push({ slug: version.slug, version: version.version, file: destName });
+      } catch (err) {
+        errors.push({ slug: version.slug, version: version.version, error: err.message });
+      }
+    }
+    const index = {
+      created_at: new Date().toISOString(),
+      total: versions.length,
+      backed_up: backed.length,
+      failed: errors.length,
+      skills: backed,
+      errors,
+    };
+    await fs.writeFile(path.join(snapshotDir, "index.json"), JSON.stringify(index, null, 2));
+    await audit(req.user.id, "backup_local", "system", null, { total: versions.length, backed: backed.length, failed: errors.length, dir: snapshotDir });
+    sendData(res, { ...index, dir: snapshotDir });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/admin/backup/github", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!isGithubSyncConfigured()) throw new AppError("github_not_configured", "GitHub App and PUBLISH_REPO must be configured", 400);
+    const result = await pool.query(
+      `SELECT sv.*, s.slug, s.name, s.description, s.owner_team, s.tags
+       FROM skill_versions sv
+       JOIN skills s ON s.id = sv.skill_id
+       WHERE sv.status = 'published' AND sv.sync_status NOT IN ('synced', 'syncing')
+       ORDER BY s.slug, sv.version`,
+    );
+    const versions = result.rows;
+    const synced = [];
+    const errors = [];
+    for (const version of versions) {
+      await pool.query("UPDATE skill_versions SET sync_status = 'syncing', sync_error = NULL WHERE id = $1", [version.id]);
+      try {
+        const sync = await githubSyncVersion(version, req.user.id);
+        await pool.query(
+          `UPDATE skill_versions
+           SET sync_status = 'synced', sync_error = NULL, publish_repo = $1, publish_branch = $2,
+               publish_commit_sha = $3, package_zip_path = $4
+           WHERE id = $5`,
+          [PUBLISH_REPO, PUBLISH_BRANCH, sync.commitSha, sync.releaseZipPath, version.id],
+        );
+        await audit(req.user.id, "version_synced_github", "skill_version", version.id, { commitSha: sync.commitSha, repo: PUBLISH_REPO });
+        synced.push({ slug: version.slug, version: version.version, commitSha: sync.commitSha });
+      } catch (err) {
+        await pool.query("UPDATE skill_versions SET sync_status = 'failed', sync_error = $1 WHERE id = $2", [err.message, version.id]);
+        await audit(req.user.id, "version_sync_failed", "skill_version", version.id, { error: err.message, repo: PUBLISH_REPO });
+        errors.push({ slug: version.slug, version: version.version, error: err.message });
+      }
+    }
+    const summary = {
+      total: versions.length,
+      synced: synced.length,
+      failed: errors.length,
+      repo: PUBLISH_REPO,
+      branch: PUBLISH_BRANCH,
+      skills: synced,
+      errors,
+    };
+    await audit(req.user.id, "backup_github", "system", null, { total: versions.length, synced: synced.length, failed: errors.length });
+    sendData(res, summary);
   } catch (error) {
     next(error);
   }
