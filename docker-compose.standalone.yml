@@ -8,11 +8,11 @@ services:
       - |
         set -eu
         apk add --no-cache curl tar
-        rm -rf /tmp/skillhub /tmp/skillhub.tar.gz
-        mkdir -p /tmp/skillhub /app
+        rm -rf /tmp/skillhub-src /tmp/skillhub.tar.gz
+        mkdir -p /tmp/skillhub-src /app
         curl -fsSL -o /tmp/skillhub.tar.gz https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz
-        tar -xzf /tmp/skillhub.tar.gz --strip-components=1 -C /tmp/skillhub
-        cp -a /tmp/skillhub/. /app/
+        tar -xzf /tmp/skillhub.tar.gz -C /tmp/skillhub-src
+        cp -a /tmp/skillhub-src/*/. /app/
         npm install --omit=dev
         node server.js
     ports:

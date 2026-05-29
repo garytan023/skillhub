@@ -2,8 +2,16 @@ const viewMeta = {
   catalog: ["WPPMEDIA MD SkillHub", "浏览、安装和管理团队发布的 Agent Skill。"],
   submit: ["上传 / 导入", "团队成员上传 zip 或粘贴 GitHub 链接导入 Skill。"],
   review: ["审核发布", "管理员批准、驳回、发布上线并按需同步 GitHub。"],
-  users: ["用户管理", "创建团队成员和管理员账号。"],
+  users: ["用户管理", "创建账号、审批注册并调整用户能力。"],
 };
+
+const userCapabilities = [
+  ["upload_skill", "上传 zip"],
+  ["import_github", "GitHub 导入"],
+  ["submit_review", "提交审核"],
+];
+
+const defaultMemberCapabilities = ["upload_skill", "import_github", "submit_review"];
 
 let session = null;
 let skills = [];
@@ -66,6 +74,18 @@ function tagPill(value) {
 function renderTags(tags, fallback = "未分类") {
   const values = Array.isArray(tags) && tags.length ? tags : [fallback];
   return values.map(tagPill).join("");
+}
+
+function renderCapabilityInputs(selected = defaultMemberCapabilities, options = {}) {
+  const values = new Set(Array.isArray(selected) ? selected : []);
+  const name = options.name || "capabilities";
+  const dataAttr = options.dataAttr || "";
+  return userCapabilities.map(([value, label]) => `
+    <label class="capability-check">
+      <input ${dataAttr} name="${escapeHtml(name)}" type="checkbox" value="${escapeHtml(value)}" ${values.has(value) ? "checked" : ""} />
+      <span>${escapeHtml(label)}</span>
+    </label>
+  `).join("");
 }
 
 function absoluteClientUrl(value) {
@@ -307,21 +327,43 @@ function renderReviewList() {
 function renderUsers() {
   const target = document.getElementById("userRows");
   if (!target) return;
-  target.innerHTML = users.length ? users.map((user) => `
+  target.innerHTML = users.length ? users.map((user) => {
+    const capabilityInputs = renderCapabilityInputs(user.capabilities, {
+      name: `capabilities-${user.id}`,
+      dataAttr: "data-user-capability",
+    });
+    return `
     <tr>
-      <td>${escapeHtml(user.name)}<br><span class="muted">${escapeHtml(user.email)}${user.rejectionReason ? ` · ${escapeHtml(user.rejectionReason)}` : ""}</span></td>
-      <td>${escapeHtml(user.team)}</td>
-      <td>${badge(user.role)}</td>
-      <td>${badge(user.status)}</td>
+      <td>
+        <input class="inline-input" data-user-field="name" value="${escapeHtml(user.name)}" />
+        <span class="muted">${escapeHtml(user.email)}${user.rejectionReason ? ` · ${escapeHtml(user.rejectionReason)}` : ""}</span>
+      </td>
+      <td><input class="inline-input small" data-user-field="team" value="${escapeHtml(user.team)}" /></td>
+      <td>
+        <select class="inline-select" data-user-field="role">
+          <option value="member" ${user.role === "member" ? "selected" : ""}>member</option>
+          <option value="admin" ${user.role === "admin" ? "selected" : ""}>admin</option>
+        </select>
+      </td>
+      <td>
+        <select class="inline-select" data-user-field="status">
+          <option value="pending" ${user.status === "pending" ? "selected" : ""}>pending</option>
+          <option value="active" ${user.status === "active" ? "selected" : ""}>active</option>
+          <option value="rejected" ${user.status === "rejected" ? "selected" : ""}>rejected</option>
+        </select>
+      </td>
+      <td><div class="capability-grid compact">${capabilityInputs}</div></td>
       <td>${formatDate(user.createdAt)}</td>
       <td>
         <div class="actions">
+          <button class="mini-button" data-action="save-user" data-user-id="${user.id}" type="button">保存</button>
           ${user.status === "pending" ? `<button class="mini-button" data-action="approve-user" data-user-id="${user.id}" type="button">批准</button>` : ""}
           ${user.status === "pending" ? `<button class="mini-button" data-action="reject-user" data-user-id="${user.id}" type="button">驳回</button>` : ""}
         </div>
       </td>
     </tr>
-  `).join("") : `<tr><td colspan="6" class="muted">暂无用户</td></tr>`;
+  `;
+  }).join("") : `<tr><td colspan="7" class="muted">暂无用户</td></tr>`;
 }
 
 function renderVersionDetail() {
@@ -386,9 +428,16 @@ function renderVersionDetail() {
   `;
 }
 
+function renderNewUserCapabilities() {
+  const target = document.getElementById("newUserCapabilities");
+  if (!target || target.innerHTML) return;
+  target.innerHTML = renderCapabilityInputs(defaultMemberCapabilities);
+}
+
 function render() {
   renderShell();
   if (!session) return;
+  renderNewUserCapabilities();
   renderMetrics();
   renderSkillCards();
   renderSkillRows();
@@ -440,7 +489,17 @@ async function bootstrap() {
 }
 
 function formDataObject(form) {
-  return Object.fromEntries(new FormData(form).entries());
+  const data = {};
+  for (const [key, value] of new FormData(form).entries()) {
+    if (data[key] === undefined) {
+      data[key] = value;
+    } else if (Array.isArray(data[key])) {
+      data[key] = [...data[key], value];
+    } else {
+      data[key] = [data[key], value];
+    }
+  }
+  return data;
 }
 
 async function handleLogin(event) {
@@ -528,6 +587,16 @@ async function handleCreateUser(event) {
   }
 }
 
+function collectUserPayload(row) {
+  return {
+    name: row.querySelector('[data-user-field="name"]').value,
+    team: row.querySelector('[data-user-field="team"]').value,
+    role: row.querySelector('[data-user-field="role"]').value,
+    status: row.querySelector('[data-user-field="status"]').value,
+    capabilities: [...row.querySelectorAll("[data-user-capability]:checked")].map((input) => input.value),
+  };
+}
+
 async function postAction(route, body = {}) {
   await api(route, {
     method: "POST",
@@ -612,6 +681,16 @@ async function handleAction(event) {
     if (action === "approve-user") {
       await postAction(`/api/users/${userId}/approve`);
       toast("用户已批准");
+      return;
+    }
+    if (action === "save-user") {
+      const payload = collectUserPayload(trigger.closest("tr"));
+      await api(`/api/users/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      await refreshAll();
+      toast("用户权限已更新");
       return;
     }
     if (action === "reject-user") {

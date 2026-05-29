@@ -28,6 +28,9 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const PUBLISH_REPO = process.env.PUBLISH_REPO || "";
 const PUBLISH_BRANCH = process.env.PUBLISH_BRANCH || "main";
 const DEFAULT_SKILL_TAGS = ["Agent 基础提升"];
+const USER_CAPABILITIES = ["upload_skill", "import_github", "submit_review"];
+const DEFAULT_MEMBER_CAPABILITIES = ["upload_skill", "import_github", "submit_review"];
+const DEFAULT_ADMIN_CAPABILITIES = [...USER_CAPABILITIES];
 const TAG_KEYWORDS = [
   { tag: "小红书", pattern: /小红书|xhs|rednote/i },
   { tag: "京东", pattern: /京东|jd\.com|jingdong/i },
@@ -142,6 +145,38 @@ function normalizeTags(...values) {
     .slice(0, 12);
 }
 
+function normalizeUserCapabilities(value, role = "member") {
+  if (value === undefined || value === null || value === "") {
+    return role === "admin" ? DEFAULT_ADMIN_CAPABILITIES : DEFAULT_MEMBER_CAPABILITIES;
+  }
+  const raw = Array.isArray(value) ? value : String(value).split(/[,，;；\n]/);
+  const allowed = new Set(USER_CAPABILITIES);
+  const normalized = raw
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  const invalid = normalized.filter((item) => !allowed.has(item));
+  if (invalid.length) {
+    throw new AppError("validation_error", "Invalid user capability", 422, [{ field: "capabilities", values: invalid }]);
+  }
+  return [...new Set(normalized)];
+}
+
+function roleForInput(value) {
+  const role = String(value || "member").trim();
+  if (!["admin", "member"].includes(role)) {
+    throw new AppError("validation_error", "Invalid user role", 422, [{ field: "role" }]);
+  }
+  return role;
+}
+
+function statusForInput(value) {
+  const status = String(value || "active").trim();
+  if (!["pending", "active", "rejected"].includes(status)) {
+    throw new AppError("validation_error", "Invalid user status", 422, [{ field: "status" }]);
+  }
+  return status;
+}
+
 function inferTagsFromText(text) {
   return TAG_KEYWORDS.filter(({ pattern }) => pattern.test(text)).map(({ tag }) => tag);
 }
@@ -243,6 +278,7 @@ async function migrate() {
       role text NOT NULL CHECK (role IN ('admin', 'member')),
       status text NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'rejected')),
       team text NOT NULL DEFAULT 'default',
+      capabilities text[] NOT NULL DEFAULT ARRAY['upload_skill','import_github','submit_review']::text[],
       password_hash text NOT NULL,
       password_salt text NOT NULL,
       reviewed_by text REFERENCES users(id),
@@ -322,21 +358,45 @@ async function migrate() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_by text REFERENCES users(id)");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_at timestamptz");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS rejection_reason text");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT ARRAY['upload_skill','import_github','submit_review']::text[]");
   await pool.query("UPDATE users SET status = 'active' WHERE status IS NULL");
+  await pool.query("UPDATE users SET capabilities = $1 WHERE capabilities IS NULL", [DEFAULT_MEMBER_CAPABILITIES]);
   await pool.query("ALTER TABLE skills ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT ARRAY[]::text[]");
   await pool.query("UPDATE skills SET tags = $1 WHERE array_length(tags, 1) IS NULL", [DEFAULT_SKILL_TAGS]);
 
-  const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
+  await ensureAdminUser();
+}
+
+async function ensureAdminUser() {
+  const adminEmail = (process.env.ADMIN_EMAIL || "admin@example.com").trim().toLowerCase();
   const adminPassword = process.env.ADMIN_PASSWORD || "admin123456";
+  if (!adminEmail || !adminEmail.includes("@")) throw new Error("ADMIN_EMAIL must be a valid email address");
+  if (adminPassword.length < 8) throw new Error("ADMIN_PASSWORD must be at least 8 characters");
+
+  const { salt, hash } = hashPassword(adminPassword);
   const existing = await pool.query("SELECT id FROM users WHERE email = $1", [adminEmail]);
   if (existing.rowCount === 0) {
     const id = uid("usr");
-    const { salt, hash } = hashPassword(adminPassword);
     await pool.query(
-      "INSERT INTO users (id, email, name, role, status, team, password_hash, password_salt, reviewed_at) VALUES ($1, $2, $3, 'admin', 'active', 'platform', $4, $5, now())",
-      [id, adminEmail, "Platform Admin", hash, salt],
+      "INSERT INTO users (id, email, name, role, status, team, capabilities, password_hash, password_salt, reviewed_at) VALUES ($1, $2, $3, 'admin', 'active', 'platform', $4, $5, $6, now())",
+      [id, adminEmail, "Platform Admin", DEFAULT_ADMIN_CAPABILITIES, hash, salt],
     );
+    return;
   }
+
+  await pool.query(
+    `UPDATE users
+       SET role = 'admin',
+           status = 'active',
+           team = 'platform',
+           capabilities = $4,
+           password_hash = $2,
+           password_salt = $3,
+           rejection_reason = NULL,
+           reviewed_at = COALESCE(reviewed_at, now())
+     WHERE email = $1`,
+    [adminEmail, hash, salt, DEFAULT_ADMIN_CAPABILITIES],
+  );
 }
 
 async function audit(actorId, action, targetType, targetId, metadata = {}) {
@@ -354,6 +414,7 @@ function toUser(row) {
     role: row.role,
     status: row.status || "active",
     team: row.team,
+    capabilities: row.capabilities || [],
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
     rejectionReason: row.rejection_reason,
@@ -442,6 +503,21 @@ function requireAdmin(req, res, next) {
     return;
   }
   next();
+}
+
+function hasCapability(user, capability) {
+  if (user?.role === "admin") return true;
+  return Array.isArray(user?.capabilities) && user.capabilities.includes(capability);
+}
+
+function requireCapability(capability) {
+  return (req, res, next) => {
+    if (!hasCapability(req.user, capability)) {
+      sendError(res, new AppError("forbidden", `Missing capability: ${capability}`, 403));
+      return;
+    }
+    next();
+  };
 }
 
 function parseScalar(value) {
@@ -1213,10 +1289,10 @@ app.post("/api/auth/register", async (req, res, next) => {
     const id = uid("usr");
     const { salt, hash } = hashPassword(password);
     const result = await pool.query(
-      `INSERT INTO users (id, email, name, role, status, team, password_hash, password_salt)
-       VALUES ($1, $2, $3, 'member', 'pending', $4, $5, $6)
+      `INSERT INTO users (id, email, name, role, status, team, capabilities, password_hash, password_salt)
+       VALUES ($1, $2, $3, 'member', 'pending', $4, $5, $6, $7)
        RETURNING *`,
-      [id, email, name, team, hash, salt],
+      [id, email, name, team, DEFAULT_MEMBER_CAPABILITIES, hash, salt],
     );
     await audit(null, "user_registered", "user", id, { email, team });
     sendData(res, toUser(result.rows[0]), 201);
@@ -1272,18 +1348,56 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res, next) => {
     const email = assertString(req.body.email, "email").toLowerCase();
     const name = assertString(req.body.name, "name");
     const password = assertString(req.body.password, "password", 8, 200);
-    const role = req.body.role === "admin" ? "admin" : "member";
+    const role = roleForInput(req.body.role);
     const team = assertString(req.body.team || "default", "team");
+    const capabilities = normalizeUserCapabilities(req.body.capabilities, role);
     const id = uid("usr");
     const { salt, hash } = hashPassword(password);
     const result = await pool.query(
-      `INSERT INTO users (id, email, name, role, status, team, password_hash, password_salt, reviewed_by, reviewed_at)
-       VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, now())
+      `INSERT INTO users (id, email, name, role, status, team, capabilities, password_hash, password_salt, reviewed_by, reviewed_at)
+       VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, now())
        RETURNING *`,
-      [id, email, name, role, team, hash, salt, req.user.id],
+      [id, email, name, role, team, capabilities, hash, salt, req.user.id],
     );
-    await audit(req.user.id, "user_created", "user", id, { email, role, team });
+    await audit(req.user.id, "user_created", "user", id, { email, role, team, capabilities });
     sendData(res, toUser(result.rows[0]), 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const existing = await pool.query("SELECT * FROM users WHERE id = $1", [req.params.id]);
+    if (existing.rowCount === 0) throw new AppError("not_found", "User not found", 404);
+
+    const current = existing.rows[0];
+    const name = req.body.name === undefined ? current.name : assertString(req.body.name, "name", 1, 120);
+    const team = req.body.team === undefined ? current.team : assertString(req.body.team, "team", 1, 80);
+    const role = req.body.role === undefined ? current.role : roleForInput(req.body.role);
+    const status = req.body.status === undefined ? current.status : statusForInput(req.body.status);
+    const capabilities = normalizeUserCapabilities(req.body.capabilities === undefined ? current.capabilities : req.body.capabilities, role);
+
+    if (req.params.id === req.user.id && (role !== "admin" || status !== "active")) {
+      throw new AppError("invalid_state", "Cannot remove admin role or active status from your own account", 409);
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET name = $1,
+           team = $2,
+           role = $3,
+           status = $4,
+           capabilities = $5,
+           rejection_reason = CASE WHEN $4 = 'rejected' THEN COALESCE(rejection_reason, 'Rejected by admin') ELSE NULL END,
+           reviewed_by = $6,
+           reviewed_at = now()
+       WHERE id = $7
+       RETURNING *`,
+      [name, team, role, status, capabilities, req.user.id, req.params.id],
+    );
+    await audit(req.user.id, "user_updated", "user", req.params.id, { role, status, team, capabilities });
+    sendData(res, toUser(result.rows[0]));
   } catch (error) {
     next(error);
   }
@@ -1332,7 +1446,7 @@ function ownerTeamForRequest(user, requestedTeam) {
   return user.team;
 }
 
-app.post("/api/skills/uploads", requireAuth, upload.single("package"), async (req, res, next) => {
+app.post("/api/skills/uploads", requireAuth, requireCapability("upload_skill"), upload.single("package"), async (req, res, next) => {
   try {
     if (!req.file) throw new AppError("missing_upload", "A zip package is required", 422);
     const entries = await readZipEntries(req.file.path);
@@ -1355,7 +1469,7 @@ app.post("/api/skills/uploads", requireAuth, upload.single("package"), async (re
   }
 });
 
-app.post("/api/skills/imports/github", requireAuth, async (req, res, next) => {
+app.post("/api/skills/imports/github", requireAuth, requireCapability("import_github"), async (req, res, next) => {
   try {
     const parsed = await importGithubPackage({
       ...req.body,
@@ -1448,7 +1562,7 @@ async function transitionVersion(req, status, fields = {}) {
   return loadVersion(req.params.id);
 }
 
-app.post("/api/skill-versions/:id/submit-review", requireAuth, async (req, res, next) => {
+app.post("/api/skill-versions/:id/submit-review", requireAuth, requireCapability("submit_review"), async (req, res, next) => {
   try {
     const version = await transitionVersion(req, "review", { reason: "submitted" });
     sendData(res, toVersion(version));

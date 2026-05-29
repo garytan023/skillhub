@@ -212,6 +212,10 @@
                   </select>
                 </label>
                 <label>密码<input name="password" type="password" autocomplete="new-password" required minlength="8" /></label>
+                <fieldset class="capability-field">
+                  <legend>能力</legend>
+                  <div class="capability-grid" id="newUserCapabilities"></div>
+                </fieldset>
                 <button class="primary-button" type="submit">创建</button>
               </form>
             </section>
@@ -227,6 +231,7 @@
                       <th>团队</th>
                       <th>角色</th>
                       <th>状态</th>
+                      <th>能力</th>
                       <th>创建时间</th>
                       <th>操作</th>
                     </tr>

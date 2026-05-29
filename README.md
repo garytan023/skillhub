@@ -68,11 +68,11 @@ services:
       - |
         set -eu
         apk add --no-cache curl tar
-        rm -rf /tmp/skillhub /tmp/skillhub.tar.gz
-        mkdir -p /tmp/skillhub /app
+        rm -rf /tmp/skillhub-src /tmp/skillhub.tar.gz
+        mkdir -p /tmp/skillhub-src /app
         curl -fsSL -o /tmp/skillhub.tar.gz https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz
-        tar -xzf /tmp/skillhub.tar.gz --strip-components=1 -C /tmp/skillhub
-        cp -a /tmp/skillhub/. /app/
+        tar -xzf /tmp/skillhub.tar.gz -C /tmp/skillhub-src
+        cp -a /tmp/skillhub-src/*/. /app/
         npm install --omit=dev
         node server.js
     ports:
@@ -193,6 +193,8 @@ http://127.0.0.1:4777
 - `ADMIN_EMAIL=admin@example.com`
 - `ADMIN_PASSWORD=admin123456`
 
+启动时系统会按 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 确保该账号是 active admin，并同步密码。修改管理员邮箱或密码后，重新部署/重启 `skillhub-app` 即可生效；旧管理员账号不会被自动删除，可登录后在用户管理里处理。
+
 ## Docker 部署说明
 
 ```bash
@@ -246,8 +248,8 @@ GitHub App 需要的最小权限：
 
 1. 管理员登录。
 2. 团队成员可在登录页提交注册申请，或由管理员在用户管理中直接创建账号。
-3. 管理员在用户管理中批准或驳回注册申请。
-4. 成员上传 zip，或粘贴 GitHub 链接导入 Skill。
+3. 管理员在用户管理中批准或驳回注册申请，并可调整用户角色、团队、状态和能力。
+4. 拥有对应能力的成员上传 zip，或粘贴 GitHub 链接导入 Skill。
 5. 系统生成草稿和扫描报告。
 6. 成员提交审核。
 7. 管理员批准或驳回。
@@ -263,6 +265,7 @@ GitHub App 需要的最小权限：
 - `GET /api/me`
 - `GET /api/users`
 - `POST /api/users`
+- `PATCH /api/users/:id`
 - `POST /api/users/:id/approve`
 - `POST /api/users/:id/reject`
 - `POST /api/skills/uploads`

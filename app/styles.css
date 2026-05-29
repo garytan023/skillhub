@@ -461,6 +461,51 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.capability-field {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.capability-field legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.capability-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capability-grid.compact {
+  max-width: 360px;
+}
+
+.capability-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  color: var(--ink);
+  background: rgba(255, 250, 244, 0.82);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.capability-check input {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+
 .github-form {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -824,6 +869,10 @@ table {
   min-width: 760px;
 }
 
+#view-users table {
+  min-width: 1120px;
+}
+
 th,
 td {
   padding: 12px;
@@ -850,6 +899,29 @@ tr:last-child td {
 
 .row-title span {
   color: var(--muted);
+  font-size: 12px;
+}
+
+.inline-input,
+.inline-select {
+  width: 100%;
+  min-width: 130px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--ink);
+  padding: 0 9px;
+  font: inherit;
+}
+
+.inline-input.small {
+  min-width: 110px;
+}
+
+.inline-input + .muted {
+  display: block;
+  margin-top: 5px;
   font-size: 12px;
 }
 
