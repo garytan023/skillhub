@@ -75,9 +75,9 @@ services:
           TARBALL_PROXY="https://ghproxy.com/https://github.com/garytan023/skillhub/archive/refs/heads/main.tar.gz"
           echo "Downloading skillhub source..."
           curl -sSL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 120 \
-            -o /tmp/skillhub.tar.gz "$TARBALL_URL" \
+            -o /tmp/skillhub.tar.gz "$$TARBALL_URL" \
             || curl -sSL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 120 \
-            -o /tmp/skillhub.tar.gz "$TARBALL_PROXY"
+            -o /tmp/skillhub.tar.gz "$$TARBALL_PROXY"
           tar -xzf /tmp/skillhub.tar.gz -C /tmp/skillhub-src
           cp -a /tmp/skillhub-src/*/. /app/
           npm install --omit=dev
@@ -93,7 +93,7 @@ services:
       DATA_DIR: /data
       PACKAGE_DIR: /data/packages
       DATABASE_URL: postgres://skillhub:skillhub@postgres:5432/skillhub
-      PUBLIC_BASE_URL: http://127.0.0.1:4777
+      PUBLIC_BASE_URL: http://wppmd.xyz:4777
       SESSION_SECRET: change-me-long-random-string
       ADMIN_EMAIL: admin@example.com
       ADMIN_PASSWORD: admin123456
@@ -175,10 +175,10 @@ curl -fsSL http://你的服务器IP或域名:4777/api/public/skills/find-skills/
 SKILL_DIR=/path/to/agent-skills curl -fsSL http://你的服务器IP或域名:4777/api/public/skills/find-skills/v0.1.0/install.sh | sh
 ```
 
-如果你在 Docker 面板里把外部端口映射成了 `11212`，请把 `PUBLIC_BASE_URL` 改成真实访问地址，例如：
+如果你在 Docker 面板里把外部端口映射成了其他端口，请把 `PUBLIC_BASE_URL` 改成真实访问地址，例如当前域名部署：
 
 ```yaml
-PUBLIC_BASE_URL: http://s.ztso.xyz:11212
+PUBLIC_BASE_URL: http://wppmd.xyz:4777
 ```
 
 ## 本地开发运行
