@@ -268,6 +268,8 @@ function renderSkillRows() {
           <div class="actions">
             <button class="mini-button" data-action="detail" data-skill-id="${skill.id}" data-version-id="${version?.id || ""}" type="button">详情</button>
             ${version?.status === "published" ? `<a class="mini-link" href="${escapeHtml(publicDownloadHref(version))}">下载</a>` : ""}
+            ${canAdmin() ? `<button class="mini-button" data-action="autofill-skill" data-skill-id="${skill.id}" type="button">自动说明</button>` : ""}
+            ${canAdmin() ? `<button class="mini-button danger" data-action="delete-skill" data-skill-id="${skill.id}" type="button">删除</button>` : ""}
           </div>
         </td>
       </tr>
@@ -384,6 +386,11 @@ function renderVersionDetail() {
       <h3>${escapeHtml(skill?.name || selectedVersion.skillId)} @ ${escapeHtml(selectedVersion.version)}</h3>
       <p class="muted">${escapeHtml(skill?.description || "")}</p>
       <div class="detail-badges">${badge(selectedVersion.status)} ${badge(selectedVersion.risk)} ${badge(selectedVersion.sourceType)}</div>
+      ${canAdmin() && skill ? `
+      <div class="detail-actions">
+        <button class="mini-button" data-action="autofill-skill" data-skill-id="${skill.id}" type="button">自动生成说明 / 分类</button>
+        <button class="mini-button danger" data-action="delete-skill" data-skill-id="${skill.id}" type="button">删除 Skill</button>
+      </div>` : ""}
     </div>
     <div class="detail-section">
       <strong>Team / 标签</strong>
@@ -452,12 +459,16 @@ async function loadHealth() {
 }
 
 async function loadSkills() {
-  skills = await api("/api/skills");
-  versionsBySkill = new Map();
-  await Promise.all(skills.map(async (skill) => {
-    const versions = await api(`/api/skills/${skill.id}/versions`);
-    versionsBySkill.set(skill.id, versions);
-  }));
+  const [skillList, versionList] = await Promise.all([
+    api("/api/skills"),
+    api("/api/skill-versions"),
+  ]);
+  skills = skillList;
+  versionsBySkill = new Map(skills.map((skill) => [skill.id, []]));
+  for (const version of versionList) {
+    if (!versionsBySkill.has(version.skillId)) versionsBySkill.set(version.skillId, []);
+    versionsBySkill.get(version.skillId).push(version);
+  }
 }
 
 async function loadUsers() {
@@ -676,6 +687,21 @@ async function handleAction(event) {
     if (action === "archive") {
       await postAction(`/api/skill-versions/${versionId}/archive`);
       toast("已下架");
+      return;
+    }
+    if (action === "autofill-skill") {
+      await api(`/api/skills/${trigger.dataset.skillId}/autofill`, { method: "POST", body: "{}" });
+      await refreshAll();
+      toast("已根据 Skill 内容生成说明和分类");
+      return;
+    }
+    if (action === "delete-skill") {
+      const skill = skills.find((item) => item.id === trigger.dataset.skillId);
+      if (!window.confirm(`确认删除 Skill「${skill?.name || trigger.dataset.skillId}」？所有版本、快照和发布包将被永久删除。`)) return;
+      await api(`/api/skills/${trigger.dataset.skillId}`, { method: "DELETE" });
+      if (selectedVersion?.skillId === trigger.dataset.skillId) selectedVersion = null;
+      await refreshAll();
+      toast("Skill 已删除");
       return;
     }
     if (action === "approve-user") {

@@ -150,6 +150,8 @@ ADMIN_PASSWORD: 强密码
 - 平台标签：支持小红书、京东、抖音、ISV、Agent 基础提升等标签和 Team 归属展示。
 - 自动扫描：解析 `SKILL.md` frontmatter、可选 `skill.manifest.json`、文件清单、内容 hash、权限和风险等级。
 - 审核发布：成员提交审核，管理员批准、驳回、发布、下架。
+- 删除 Skill：管理员可永久删除 Skill 及其全部版本、快照和发布包。
+- 自动说明 / 分类：上传导入时自动从 `SKILL.md` 内容提取描述和平台标签；管理员也可在详情页一键重新生成。
 - 在线拉取：发布上线后生成公开只读下载接口和 Agent 安装命令。
 - GitHub 同步：配置 GitHub App 后，可写入企业 Skill repo：`skills/{skill_slug}/`。
 - 分享安装：详情页提供下载链接和安装命令：`curl -fsSL .../install.sh | sh`。
@@ -281,7 +283,10 @@ GitHub App 需要的最小权限：
 - `POST /api/skills/imports/github`
 - `GET /api/skills`
 - `GET /api/skills/:id`
+- `DELETE /api/skills/:id`
+- `POST /api/skills/:id/autofill`
 - `GET /api/skills/:id/versions`
+- `GET /api/skill-versions`
 - `POST /api/skill-versions/:id/submit-review`
 - `POST /api/skill-versions/:id/approve`
 - `POST /api/skill-versions/:id/reject`

@@ -992,6 +992,17 @@ tr:last-child td {
   color: var(--blue);
 }
 
+.mini-button.danger {
+  border-color: #f0c5c2;
+  color: var(--red);
+}
+
+.mini-button.danger:hover {
+  border-color: var(--red);
+  background: #fff5f5;
+  color: var(--red);
+}
+
 .mini-link {
   min-height: 30px;
   border-radius: 8px;

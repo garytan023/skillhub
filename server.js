@@ -7,6 +7,9 @@ const fs = require("fs/promises");
 const fssync = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { promisify } = require("util");
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
 
 const ROOT = __dirname;
 const APP_DIR = path.join(ROOT, "app");
@@ -182,6 +185,42 @@ function inferTagsFromText(text) {
   return TAG_KEYWORDS.filter(({ pattern }) => pattern.test(text)).map(({ tag }) => tag);
 }
 
+function deriveDescription(manifest, frontmatter, body) {
+  const explicit = String(manifest?.description || frontmatter?.description || "").trim();
+  if (explicit) return explicit.slice(0, 300);
+  const lines = String(body || "").split(/\r?\n/);
+  let inCodeFence = false;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence || !line) continue;
+    if (/^(#{1,6}\s|>|[-*+]\s|\d+\.\s|\||!\[|<)/.test(line)) continue;
+    const text = line
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[*_`]/g, "")
+      .trim();
+    if (text.length >= 8) return text.slice(0, 300);
+  }
+  const heading = lines.map((line) => line.trim()).find((line) => /^#{1,6}\s+\S/.test(line));
+  return heading ? heading.replace(/^#{1,6}\s+/, "").slice(0, 300) : "";
+}
+
+function deriveSkillTags(name, manifest, frontmatter, body, extraTags) {
+  return normalizeTags(
+    extraTags,
+    manifest?.tags,
+    manifest?.platforms,
+    manifest?.categories,
+    frontmatter?.tags,
+    frontmatter?.platforms,
+    frontmatter?.categories,
+    inferTagsFromText(`${name}\n${body}\n${JSON.stringify(manifest || {})}`),
+  );
+}
+
 function parseCookies(header) {
   return String(header || "")
     .split(";")
@@ -210,7 +249,12 @@ function verifySession(token) {
   const expected = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
   if (Buffer.byteLength(signature) !== Buffer.byteLength(expected)) return null;
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-  const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
   if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
   return payload;
 }
@@ -226,13 +270,13 @@ function clearSessionCookie(res) {
   res.setHeader("set-cookie", "skillhub_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
 }
 
-function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const hash = crypto.pbkdf2Sync(password, salt, 120000, 32, "sha256").toString("hex");
+async function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = (await pbkdf2Async(password, salt, 120000, 32, "sha256")).toString("hex");
   return { salt, hash };
 }
 
-function verifyPassword(password, salt, expectedHash) {
-  const { hash } = hashPassword(password, salt);
+async function verifyPassword(password, salt, expectedHash) {
+  const { hash } = await hashPassword(password, salt);
   if (Buffer.byteLength(hash, "hex") !== Buffer.byteLength(expectedHash, "hex")) return false;
   return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(expectedHash, "hex"));
 }
@@ -375,7 +419,7 @@ async function ensureAdminUser() {
   if (!adminEmail || !adminEmail.includes("@")) throw new Error("ADMIN_EMAIL must be a valid email address");
   if (adminPassword.length < 8) throw new Error("ADMIN_PASSWORD must be at least 8 characters");
 
-  const { salt, hash } = hashPassword(adminPassword);
+  const { salt, hash } = await hashPassword(adminPassword);
   const existing = await pool.query("SELECT id FROM users WHERE email = $1", [adminEmail]);
   if (existing.rowCount === 0) {
     const id = uid("usr");
@@ -404,7 +448,7 @@ async function ensureAdminUser() {
 async function audit(actorId, action, targetType, targetId, metadata = {}) {
   await pool.query(
     "INSERT INTO audit_logs (id, actor_id, action, target_type, target_id, metadata) VALUES ($1, $2, $3, $4, $5, $6)",
-    [uid("audit"), actorId || null, action, targetType, targetId, JSON.stringify(metadata)],
+    [uid("audit"), actorId || null, action, targetType, targetId || "global", JSON.stringify(metadata)],
   );
 }
 
@@ -724,16 +768,7 @@ function parseSkillPackage(entries, source) {
   const name = manifest.name || frontmatter.name || path.basename(source.sourcePath || "skill");
   const slug = slugify(manifest.name || frontmatter.name || name);
   const version = source.version || manifest.version || frontmatter.version || source.sourceRef || nowIso().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const tags = normalizeTags(
-    source.tags,
-    manifest.tags,
-    manifest.platforms,
-    manifest.categories,
-    frontmatter.tags,
-    frontmatter.platforms,
-    frontmatter.categories,
-    inferTagsFromText(`${name}\n${body}\n${JSON.stringify(manifest)}`),
-  );
+  const tags = deriveSkillTags(name, manifest, frontmatter, body, source.tags);
   const scanReport = {
     scannedAt: nowIso(),
     fileCount: fileManifest.length,
@@ -751,7 +786,7 @@ function parseSkillPackage(entries, source) {
     skill: {
       name,
       slug,
-      description: manifest.description || frontmatter.description || body.split(/\r?\n/).find((line) => line.trim()) || "",
+      description: deriveDescription(manifest, frontmatter, body),
       ownerTeam: source.ownerTeam || "default",
       tags: tags.length ? tags : DEFAULT_SKILL_TAGS,
     },
@@ -897,6 +932,7 @@ async function upsertSkillPackage(parsed, userId) {
     return { skillId: finalSkillId, versionId };
   } catch (error) {
     await client.query("ROLLBACK");
+    await fs.rm(snapshotDir, { recursive: true, force: true });
     throw error;
   } finally {
     client.release();
@@ -1149,16 +1185,15 @@ async function importGithubPackage(payload) {
   const selected = selectGithubSkillEntries(treeEntries, sourcePath);
   const files = tree.tree.filter((item) => item.type === "blob" && item.path.startsWith(selected.prefix));
   if (files.length > MAX_FILE_COUNT) throw new AppError("too_many_files", `GitHub skill exceeds ${MAX_FILE_COUNT} files`, 422);
-  const entries = [];
-  for (const file of files) {
+  const entries = await mapWithConcurrency(files, 8, async (file) => {
     const blob = await githubRequest(`/repos/${owner}/${name}/git/blobs/${file.sha}`);
     const content = Buffer.from(blob.content || "", blob.encoding || "base64");
     if (content.length > MAX_FILE_BYTES) throw new AppError("file_too_large", `File exceeds ${MAX_FILE_BYTES} bytes`, 422, [{ path: file.path }]);
-    entries.push({
+    return {
       path: validateRelativePath(file.path.slice(selected.prefix.length)),
       content,
-    });
-  }
+    };
+  });
   return parseSkillPackage(entries, {
     sourceType: "github",
     sourceRepo: repo,
@@ -1168,6 +1203,20 @@ async function importGithubPackage(payload) {
     version: payload.version || sourceRef,
     ownerTeam: payload.ownerTeam || "default",
   });
+}
+
+async function mapWithConcurrency(items, limit, task) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await task(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function loadVersion(versionId) {
@@ -1289,7 +1338,7 @@ app.post("/api/auth/register", async (req, res, next) => {
     const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
     if (existing.rowCount) throw new AppError("email_exists", "Email is already registered", 409);
     const id = uid("usr");
-    const { salt, hash } = hashPassword(password);
+    const { salt, hash } = await hashPassword(password);
     const result = await pool.query(
       `INSERT INTO users (id, email, name, role, status, team, capabilities, password_hash, password_salt)
        VALUES ($1, $2, $3, 'member', 'pending', $4, $5, $6, $7)
@@ -1308,7 +1357,7 @@ app.post("/api/auth/login", async (req, res, next) => {
     const email = assertString(req.body.email, "email").toLowerCase();
     const password = assertString(req.body.password, "password", 1, 200);
     const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    if (result.rowCount === 0 || !verifyPassword(password, result.rows[0].password_salt, result.rows[0].password_hash)) {
+    if (result.rowCount === 0 || !(await verifyPassword(password, result.rows[0].password_salt, result.rows[0].password_hash))) {
       throw new AppError("invalid_credentials", "Invalid email or password", 401);
     }
     const status = result.rows[0].status || "active";
@@ -1354,7 +1403,7 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res, next) => {
     const team = assertString(req.body.team || "default", "team");
     const capabilities = normalizeUserCapabilities(req.body.capabilities, role);
     const id = uid("usr");
-    const { salt, hash } = hashPassword(password);
+    const { salt, hash } = await hashPassword(password);
     const result = await pool.query(
       `INSERT INTO users (id, email, name, role, status, team, capabilities, password_hash, password_salt, reviewed_by, reviewed_at)
        VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, now())
@@ -1503,6 +1552,68 @@ app.get("/api/skills/:id", requireAuth, async (req, res, next) => {
       if (published.rowCount === 0) throw new AppError("forbidden", "Not allowed", 403);
     }
     sendData(res, toSkill(skill));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/skills/:id", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const skillResult = await pool.query("SELECT * FROM skills WHERE id = $1", [req.params.id]);
+    if (skillResult.rowCount === 0) throw new AppError("not_found", "Skill not found", 404);
+    const skill = skillResult.rows[0];
+    const versions = await pool.query("SELECT id, snapshot_dir, package_zip_path FROM skill_versions WHERE skill_id = $1", [req.params.id]);
+    await pool.query("DELETE FROM skills WHERE id = $1", [req.params.id]);
+    for (const version of versions.rows) {
+      if (version.snapshot_dir) await fs.rm(version.snapshot_dir, { recursive: true, force: true });
+      if (version.package_zip_path) await fs.rm(version.package_zip_path, { force: true });
+      await fs.rm(path.join(UPLOAD_DIR, `${version.id}.zip`), { force: true });
+    }
+    await audit(req.user.id, "skill_deleted", "skill", req.params.id, { slug: skill.slug, name: skill.name, versions: versions.rowCount });
+    sendData(res, { ok: true, id: req.params.id, slug: skill.slug, deletedVersions: versions.rowCount });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/skills/:id/autofill", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const skillResult = await pool.query("SELECT * FROM skills WHERE id = $1", [req.params.id]);
+    if (skillResult.rowCount === 0) throw new AppError("not_found", "Skill not found", 404);
+    const skill = skillResult.rows[0];
+    const versionResult = await pool.query(
+      "SELECT * FROM skill_versions WHERE skill_id = $1 ORDER BY created_at DESC LIMIT 1",
+      [req.params.id],
+    );
+    if (versionResult.rowCount === 0) throw new AppError("invalid_state", "Skill has no versions to analyze", 409);
+    const version = versionResult.rows[0];
+    const skillContent = await fs.readFile(path.join(version.snapshot_dir, "SKILL.md"), "utf8").catch(() => {
+      throw new AppError("snapshot_missing", "SKILL.md snapshot is missing on disk", 409);
+    });
+    const { frontmatter, body } = parseFrontmatter(skillContent);
+    const manifest = version.manifest || {};
+    const description = deriveDescription(manifest, frontmatter, body);
+    const tags = deriveSkillTags(skill.name, manifest, frontmatter, body);
+    const result = await pool.query(
+      "UPDATE skills SET description = $1, tags = $2, updated_at = now() WHERE id = $3 RETURNING *",
+      [description, tags.length ? tags : DEFAULT_SKILL_TAGS, req.params.id],
+    );
+    await audit(req.user.id, "skill_autofilled", "skill", req.params.id, { description, tags });
+    sendData(res, toSkill(result.rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/skill-versions", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT sv.*, s.slug FROM skill_versions sv JOIN skills s ON s.id = sv.skill_id
+       WHERE $1::boolean OR sv.created_by = $2 OR sv.status = 'published'
+       ORDER BY sv.created_at DESC`,
+      [req.user.role === "admin", req.user.id],
+    );
+    sendData(res, result.rows.map(toVersion));
   } catch (error) {
     next(error);
   }
